@@ -41,8 +41,8 @@ async function startServer() {
   await connectDB(); // Connect to SQL Server first
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
-    console.log(`📡 API Base URL: http://10.160.76.49:${PORT}/api`);
-    console.log(`📱 Mobile app should connect to: http://10.160.76.49:${PORT}`);
+    console.log(`📡 API Base URL: http://192.168.1.111:${PORT}/api`);
+    console.log(`📱 Mobile app should connect to: http://192.168.1.111:${PORT}`);
   });
 }
 
