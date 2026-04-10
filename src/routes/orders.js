@@ -210,7 +210,7 @@ router.get('/list', authMiddleware, async (req, res) => {
     const orders = result.recordset.map(r => ({
       OrderID: r.ID,
       SaleOrderNo: r.SaleOrderNo,
-      CustomerName: '(V3) ' + r.PartyName,
+      CustomerName: r.PartyName,
       OrderDate: r.Date,
       Qty: r.Qty,
       DesptchQty: r.DesptchQty,
@@ -271,17 +271,9 @@ router.get('/:id', authMiddleware, async (req, res) => {
         ORDER BY t.srno
       `);
       
-    // DEBUG: Look at the recordset directly on the server
-    console.log('DEBUG: order record for ID', id, ':', JSON.stringify(headerResult.recordset[0]));
-
-    // ENSURE ALL VARIATIONS AND A VERSION KEY FOR DIAGNOSTICS
+    // Clean response for production
     const orderData = {
       ...headerResult.recordset[0],
-      server_version: "v3_nuclear",
-      SalesmanName: headerResult.recordset[0].SalesmanName || headerResult.recordset[0].SalesmanCode || "No Name",
-      SalesmanCode: headerResult.recordset[0].SalesmanCode || "",
-      salesman_name: headerResult.recordset[0].SalesmanName || headerResult.recordset[0].SalesmanCode || "No Name",
-      salesman_code: headerResult.recordset[0].SalesmanCode || "",
       products: itemsResult.recordset
     };
 
