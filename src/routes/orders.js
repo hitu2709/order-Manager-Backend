@@ -274,15 +274,14 @@ router.get('/:id', authMiddleware, async (req, res) => {
     // DEBUG: Look at the recordset directly on the server
     console.log('DEBUG: order record for ID', id, ':', JSON.stringify(headerResult.recordset[0]));
 
-    // Ensure ALL variations of the salesman property exist for the frontend
+    // ENSURE ALL VARIATIONS AND A VERSION KEY FOR DIAGNOSTICS
     const orderData = {
       ...headerResult.recordset[0],
-      SalesmanName: headerResult.recordset[0].SalesmanName,
-      salesmanName: headerResult.recordset[0].SalesmanName,
-      SalesmanCode: headerResult.recordset[0].SalesmanCode,
-      salesmanCode: headerResult.recordset[0].SalesmanCode,
-      brokerCode: headerResult.recordset[0].SalesmanCode,
-      Broker_code: headerResult.recordset[0].SalesmanCode,
+      server_version: "v3_nuclear",
+      SalesmanName: headerResult.recordset[0].SalesmanName || headerResult.recordset[0].SalesmanCode || "No Name",
+      SalesmanCode: headerResult.recordset[0].SalesmanCode || "",
+      salesman_name: headerResult.recordset[0].SalesmanName || headerResult.recordset[0].SalesmanCode || "No Name",
+      salesman_code: headerResult.recordset[0].SalesmanCode || "",
       products: itemsResult.recordset
     };
 
