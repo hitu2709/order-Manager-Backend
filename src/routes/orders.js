@@ -183,7 +183,7 @@ router.get('/numbers', authMiddleware, async (req, res) => {
 
 // GET /api/orders/list
 // Get recent orders list for dashboard using user's exact SQL query
-router.get('/list', authMiddleware, async (req, res) => {
+router.get('/list_v2', authMiddleware, async (req, res) => {
   try {
     const pool = getPool();
     
@@ -210,7 +210,7 @@ router.get('/list', authMiddleware, async (req, res) => {
     const orders = result.recordset.map(r => ({
       OrderID: r.ID,
       SaleOrderNo: r.SaleOrderNo,
-      CustomerName: r.PartyName,
+      CustomerName: '(V3) ' + r.PartyName,
       OrderDate: r.Date,
       Qty: r.Qty,
       DesptchQty: r.DesptchQty,
