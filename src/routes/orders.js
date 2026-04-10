@@ -271,6 +271,9 @@ router.get('/:id', authMiddleware, async (req, res) => {
         ORDER BY t.srno
       `);
       
+    // DEBUG: Look at the recordset directly on the server
+    console.log('DEBUG: order record for ID', id, ':', JSON.stringify(headerResult.recordset[0]));
+
     // Ensure ALL variations of the salesman property exist for the frontend
     const orderData = {
       ...headerResult.recordset[0],
