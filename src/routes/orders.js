@@ -271,8 +271,19 @@ router.get('/:id', authMiddleware, async (req, res) => {
         ORDER BY t.srno
       `);
       
-    order.products = itemsResult.recordset;
-    return res.status(200).json({ success: true, data: order });
+    // Ensure ALL variations of the salesman property exist for the frontend
+    const orderData = {
+      ...headerResult.recordset[0],
+      SalesmanName: headerResult.recordset[0].SalesmanName,
+      salesmanName: headerResult.recordset[0].SalesmanName,
+      SalesmanCode: headerResult.recordset[0].SalesmanCode,
+      salesmanCode: headerResult.recordset[0].SalesmanCode,
+      brokerCode: headerResult.recordset[0].SalesmanCode,
+      Broker_code: headerResult.recordset[0].SalesmanCode,
+      products: itemsResult.recordset
+    };
+
+    return res.status(200).json({ success: true, data: orderData });
   } catch (err) {
     console.error('Get order error:', err);
     return res.status(500).json({ success: false, message: 'Error fetching order' });
