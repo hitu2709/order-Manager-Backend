@@ -238,12 +238,14 @@ router.get('/:id', authMiddleware, async (req, res) => {
     const headerResult = await pool.request()
       .input('id', sql.Int, id)
       .query(`
-        SELECT o.trans_no as OrderID, a.ac_name as CustomerName, o.trans_dt as OrderDate, 
+        SELECT o.trans_no as OrderID, o.client_code, a.ac_name as CustomerName, 
+               o.trans_dt as OrderDate, o.Broker_code as SalesmanCode, b.ac_name as SalesmanName,
                'Pending' as Status, o.amount as TotalAmount,
                a.Place, a.Contact_person, a.ac_name1 as Address2,
                o.transport as Transport, o.Sp_Note as Notes
         FROM s_order o
         LEFT JOIN Acmast a ON o.client_code = a.ac_code
+        LEFT JOIN Acmast b ON o.Broker_code = b.ac_code
         WHERE o.trans_no = @id
       `);
       
