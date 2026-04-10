@@ -239,13 +239,15 @@ router.get('/:id', authMiddleware, async (req, res) => {
       .input('id', sql.Int, id)
       .query(`
         SELECT o.trans_no as OrderID, o.client_code, a.ac_name as CustomerName, 
-               o.trans_dt as OrderDate, o.Broker_code as SalesmanCode, b.ac_name as SalesmanName,
+               o.trans_dt as OrderDate, 
+               LTRIM(RTRIM(ISNULL(o.Broker_code,''))) as SalesmanCode, 
+               COALESCE(b.ac_name, LTRIM(RTRIM(o.Broker_code)), 'Missing Name') as SalesmanName,
                'Pending' as Status, o.amount as TotalAmount,
                a.Place, a.Contact_person, a.ac_name1 as Address2,
                o.transport as Transport, o.Sp_Note as Notes
         FROM s_order o
-        LEFT JOIN Acmast a ON o.client_code = a.ac_code
-        LEFT JOIN Acmast b ON o.Broker_code = b.ac_code
+        LEFT JOIN Acmast a ON LTRIM(RTRIM(o.client_code)) = LTRIM(RTRIM(a.ac_code))
+        LEFT JOIN Acmast b ON LTRIM(RTRIM(o.Broker_code)) = LTRIM(RTRIM(b.ac_code))
         WHERE o.trans_no = @id
       `);
       
