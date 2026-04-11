@@ -141,7 +141,7 @@ router.get('/parties', authMiddleware, async (req, res) => {
         A.discper,
         LTRIM(RTRIM(ISNULL(E.transport, ''))) as Transport
       From Acmast A
-      LEFT JOIN ac_excise E ON LTRIM(RTRIM(A.ac_code)) = LTRIM(RTRIM(E.ac_code))
+      LEFT JOIN Ac_Excise E ON LTRIM(RTRIM(A.ac_code)) = LTRIM(RTRIM(E.ac_Code))
       Where A.grp_name Like '%DEBTORS%' 
       Order by A.ac_name
     `);
