@@ -135,11 +135,11 @@ router.get('/parties', authMiddleware, async (req, res) => {
     const pool = getPool();
     const result = await pool.request().query(`
       SELECT 
-        LTRIM(RTRIM(A.ac_code)) as partyId, 
-        LTRIM(RTRIM(ISNULL(A.ac_name, 'Unknown'))) + ' (Fetch)' as partyName, 
-        LTRIM(RTRIM(ISNULL(A.category, ''))) as category, 
+        A.ac_code as PartyID, 
+        A.ac_name as PartyName, 
+        A.category as Category, 
         A.discper,
-        LTRIM(RTRIM(ISNULL(E.transport, ''))) as transport
+        LTRIM(RTRIM(ISNULL(E.transport, ''))) as Transport
       From Acmast A
       LEFT JOIN Ac_Excise E ON LTRIM(RTRIM(A.ac_code)) = LTRIM(RTRIM(E.ac_Code))
       Where A.grp_name Like '%DEBTORS%' 
