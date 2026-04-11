@@ -210,9 +210,8 @@ router.get('/list', authMiddleware, async (req, res) => {
       FROM S_order 
       LEFT JOIN acmast ON S_order.client_code = acmast.ac_code  
       LEFT JOIN Ord_Tran ON S_order.Trans_No = Ord_Tran.Trans_No  
-      WHERE S_order.book_type = 'SO' AND isnull(AddStock,'') = '' 
+      WHERE S_order.book_type = 'SO'
       GROUP BY S_order.Trans_No, S_order.Vouchno, S_order.trans_dt, acmast.ac_name 
-      HAVING Sum(isnull(Ord_Tran.Qty,0)-(isnull(Ord_Tran.Rec_Qty,0)+isnull(Ord_Tran.SetoffQty,0))) > 0 
       ORDER BY S_order.trans_dt DESC, (CASE WHEN isnumeric(S_order.Vouchno)=1 THEN cast(S_order.Vouchno as int) END)
     `);
 
