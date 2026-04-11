@@ -136,7 +136,7 @@ router.get('/parties', authMiddleware, async (req, res) => {
     const result = await pool.request().query(`
       SELECT 
         LTRIM(RTRIM(A.ac_code)) as partyId, 
-        LTRIM(RTRIM(A.ac_name)) + ' (Fetch)' as partyName, 
+        LTRIM(RTRIM(ISNULL(A.ac_name, 'Unknown'))) + ' (Fetch)' as partyName, 
         LTRIM(RTRIM(ISNULL(A.category, ''))) as category, 
         A.discper,
         LTRIM(RTRIM(ISNULL(E.transport, ''))) as transport
