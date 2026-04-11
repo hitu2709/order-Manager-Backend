@@ -139,7 +139,7 @@ router.get('/parties', authMiddleware, async (req, res) => {
         A.ac_name as PartyName, 
         A.category as Category, 
         A.discper,
-        (SELECT TOP 1 LTRIM(RTRIM(ISNULL(transport, ''))) FROM ac_excise WHERE ac_code = A.ac_code) as Transport
+        (SELECT TOP 1 LTRIM(RTRIM(ISNULL(transport, ''))) FROM Ac_Excise WHERE LTRIM(RTRIM(ac_Code)) = LTRIM(RTRIM(A.ac_code))) as Transport
       From Acmast A
       Where A.grp_name Like '%DEBTORS%' 
       Order by A.ac_name
