@@ -134,10 +134,16 @@ router.get('/parties', authMiddleware, async (req, res) => {
   try {
     const pool = getPool();
     const result = await pool.request().query(`
-      SELECT ac_code as PartyID, ac_name as PartyName, category as Category, discper 
-      From Acmast 
-      Where grp_name Like '%DEBTORS%' 
-      Order by ac_name
+      SELECT 
+        A.ac_code as PartyID, 
+        A.ac_name as PartyName, 
+        A.category as Category, 
+        A.discper,
+        LTRIM(RTRIM(ISNULL(E.transport, ''))) as Transport
+      From Acmast A
+      LEFT JOIN ac_excise E ON A.ac_code = E.ac_code
+      Where A.grp_name Like '%DEBTORS%' 
+      Order by A.ac_name
     `);
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
