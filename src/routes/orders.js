@@ -31,9 +31,9 @@ router.post('/create', authMiddleware, async (req, res) => {
     // Calculate total amount (use provided or calculate)
     const calcTotal = totalAmount || products.reduce((sum, p) => sum + (p.quantity * p.unitPrice - (p.discount || 0)), 0);
 
-    // 1. Get next trans_no (Global from Datanumber)
+    // 1. Get next trans_no (Global from data_no)
     // We use UPDLOCK, HOLDLOCK to prevent race conditions during heavy traffic
-    const maxRes = await request.query(`SELECT MAX(trans_no) as maxId FROM Datanumber WITH (UPDLOCK, HOLDLOCK)`);
+    const maxRes = await request.query(`SELECT MAX(trans_no) as maxId FROM data_no WITH (UPDLOCK, HOLDLOCK)`);
     let nextTransNo = 100000001; // Default start if table is empty
     if (maxRes.recordset.length > 0 && maxRes.recordset[0].maxId) {
        nextTransNo = parseInt(maxRes.recordset[0].maxId) + 1;
@@ -47,7 +47,7 @@ router.post('/create', authMiddleware, async (req, res) => {
       .input('dt', sql.DateTime, orderDateObj)
       .query(`
         SELECT MAX(CAST(vouch_no AS INT)) AS maxDayVouch 
-        FROM Datanumber 
+        FROM data_no 
         WHERE Book_type = 'SO'
         AND trans_no IN (SELECT trans_no FROM s_order WHERE CAST(trans_dt AS DATE) = CAST(@dt AS DATE))
       `);
@@ -57,13 +57,13 @@ router.post('/create', authMiddleware, async (req, res) => {
        nextVouchNo = parseInt(maxVouchRes.recordset[0].maxDayVouch) + 1;
     }
 
-    // 3. Insert into Datanumber table first (The lock-claim)
+    // 3. Insert into data_no table first (The lock-claim)
     await request
       .input('dTransNo', sql.BigInt, nextTransNo)
       .input('dVouchNo', sql.NVarChar(10), String(nextVouchNo))
       .input('dBookType', sql.NVarChar(2), 'SO')
       .query(`
-        INSERT INTO Datanumber (trans_no, vouch_no, Book_type, sub_type)
+        INSERT INTO data_no (trans_no, vouch_no, Book_type, sub_type)
         VALUES (@dTransNo, @dVouchNo, @dBookType, NULL)
       `);
 
