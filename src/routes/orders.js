@@ -31,31 +31,41 @@ router.post('/create', authMiddleware, async (req, res) => {
     // Calculate total amount (use provided or calculate)
     const calcTotal = totalAmount || products.reduce((sum, p) => sum + (p.quantity * p.unitPrice - (p.discount || 0)), 0);
 
-    // 1. Get next trans_no (Global)
-    const maxRes = await request.query(`SELECT TOP 1 trans_no FROM s_order ORDER BY trans_no DESC`);
-    let nextTransNo = 1;
-    if (maxRes.recordset.length > 0) {
-       const maxId = maxRes.recordset[0].trans_no;
-       nextTransNo = (typeof maxId === 'number' ? maxId : parseInt(maxId) || 0) + 1;
+    // 1. Get next trans_no (Global from Datanumber)
+    // We use UPDLOCK, HOLDLOCK to prevent race conditions during heavy traffic
+    const maxRes = await request.query(`SELECT MAX(trans_no) as maxId FROM Datanumber WITH (UPDLOCK, HOLDLOCK)`);
+    let nextTransNo = 100000001; // Default start if table is empty
+    if (maxRes.recordset.length > 0 && maxRes.recordset[0].maxId) {
+       nextTransNo = parseInt(maxRes.recordset[0].maxId) + 1;
     }
 
-    // 2. Get next VouchNo (Daily)
+    // 2. Get next VouchNo (Daily reset logic)
+    // User requested: vouch number should start from 1 every day
     const orderDateObj = orderDate ? new Date(orderDate) : new Date();
     const vouchRequest = new sql.Request(transaction); 
     const maxVouchRes = await vouchRequest
       .input('dt', sql.DateTime, orderDateObj)
       .query(`
-        SELECT MAX(CAST(VouchNo AS INT)) AS maxDayVouch 
-        FROM s_order 
-        WHERE CAST(trans_dt AS DATE) = CAST(@dt AS DATE) 
-        AND book_type = 'SO'
-        AND ISNUMERIC(VouchNo) = 1
-        AND CAST(VouchNo AS BIGINT) < 100000
+        SELECT MAX(CAST(vouch_no AS INT)) AS maxDayVouch 
+        FROM Datanumber 
+        WHERE Book_type = 'SO'
+        AND trans_no IN (SELECT trans_no FROM s_order WHERE CAST(trans_dt AS DATE) = CAST(@dt AS DATE))
       `);
+    
     let nextVouchNo = 1;
     if (maxVouchRes.recordset.length > 0 && maxVouchRes.recordset[0].maxDayVouch) {
        nextVouchNo = parseInt(maxVouchRes.recordset[0].maxDayVouch) + 1;
     }
+
+    // 3. Insert into Datanumber table first (The lock-claim)
+    await request
+      .input('dTransNo', sql.BigInt, nextTransNo)
+      .input('dVouchNo', sql.NVarChar(10), String(nextVouchNo))
+      .input('dBookType', sql.NVarChar(2), 'SO')
+      .query(`
+        INSERT INTO Datanumber (trans_no, vouch_no, Book_type, sub_type)
+        VALUES (@dTransNo, @dVouchNo, @dBookType, NULL)
+      `);
 
     // Helper to safely truncate strings to max length
     const trunc = (str, len) => String(str || '').substring(0, len);
