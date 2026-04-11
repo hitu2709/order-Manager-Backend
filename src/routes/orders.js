@@ -62,9 +62,10 @@ router.post('/create', authMiddleware, async (req, res) => {
       .input('dTransNo', sql.BigInt, nextTransNo)
       .input('dVouchNo', sql.NVarChar(10), String(nextVouchNo))
       .input('dBookType', sql.NVarChar(2), 'SO')
+      .input('dDate', sql.DateTime, new Date())
       .query(`
-        INSERT INTO data_no (trans_no, vouch_no, Book_type, sub_type)
-        VALUES (@dTransNo, @dVouchNo, @dBookType, NULL)
+        INSERT INTO data_no (trans_no, vouch_no, Book_type, sub_type, sydate)
+        VALUES (@dTransNo, @dVouchNo, @dBookType, NULL, @dDate)
       `);
 
     // Helper to safely truncate strings to max length
