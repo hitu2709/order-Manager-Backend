@@ -103,9 +103,10 @@ router.post('/create', authMiddleware, async (req, res) => {
         .input('discount', sql.Money, parseFloat(p.discount || 0))
         .input('bookType', sql.NVarChar(2), 'SO')
         .input('itemHead', sql.NVarChar(50), trunc(p.productName || '', 50))
+        .input('description', sql.NVarChar(200), trunc(p.remark || '', 200))
         .query(`
-          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead)
-          VALUES (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead)
+          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description)
+          VALUES (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead, @description)
         `);
     }
 
