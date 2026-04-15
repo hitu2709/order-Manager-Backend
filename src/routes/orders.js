@@ -206,18 +206,21 @@ router.get('/list', authMiddleware, async (req, res) => {
     
     const result = await pool.request()
       .query(`
-      SELECT 
-        Convert(varchar(10), S_order.trans_dt, 103) as [Date],
-        S_order.Vouchno as [SaleOrderNo],
-        acmast.ac_name as [PartyName],
-        (SELECT Sum(isnull(Qty,0)) FROM Ord_Tran WHERE Trans_No = S_order.Trans_No) as Qty,
-        (SELECT Sum(isnull(Rec_Qty,0)) FROM Ord_Tran WHERE Trans_No = S_order.Trans_No) as DesptchQty,
-        (SELECT Sum(isnull(Qty,0)-(isnull(Rec_Qty,0)+isnull(SetoffQty,0))) FROM Ord_Tran WHERE Trans_No = S_order.Trans_No) as BalQty,
-        S_order.Trans_No as [ID]
-      FROM S_order 
-      LEFT JOIN acmast ON S_order.client_code = acmast.ac_code  
-      WHERE S_order.book_type = 'SO'
-      ORDER BY S_order.trans_dt DESC, (CASE WHEN isnumeric(S_order.Vouchno)=1 THEN cast(S_order.Vouchno as int) END)
+      SELECT * FROM (
+        SELECT 
+          Convert(varchar(10), S_order.trans_dt, 103) as [Date],
+          S_order.Vouchno as [SaleOrderNo],
+          acmast.ac_name as [PartyName],
+          (SELECT Sum(isnull(Qty,0)) FROM Ord_Tran WHERE Trans_No = S_order.Trans_No) as Qty,
+          (SELECT Sum(isnull(Rec_Qty,0)) FROM Ord_Tran WHERE Trans_No = S_order.Trans_No) as DesptchQty,
+          (SELECT Sum(isnull(Qty,0)-(isnull(Rec_Qty,0)+isnull(SetoffQty,0))) FROM Ord_Tran WHERE Trans_No = S_order.Trans_No) as BalQty,
+          S_order.Trans_No as [ID]
+        FROM S_order 
+        LEFT JOIN acmast ON S_order.client_code = acmast.ac_code  
+        WHERE S_order.book_type = 'SO'
+      ) AS PendingOrders
+      WHERE ISNULL(BalQty, 0) > 0
+      ORDER BY [Date] DESC
     `);
 
     // Map to frontend-friendly field names
