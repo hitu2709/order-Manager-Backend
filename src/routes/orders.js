@@ -335,27 +335,34 @@ router.put('/:id', authMiddleware, async (req, res) => {
     // 2. Delete existing items
     await request.query(`DELETE FROM ord_tran WHERE trans_no = @id`);
 
-    // 3. Re-insert items
+    // 3. Re-insert items in batches of 50 to handle large orders (500+ items) without timeout
     if (products && products.length > 0) {
-      for (let i = 0; i < products.length; i++) {
-        const p = products[i];
-        const prodRequest = new sql.Request(transaction);
-        prodRequest.timeout = 60000; // 60 second timeout per item insert
-        await prodRequest
-          .input('transNo', sql.Int, id)
-          .input('srno', sql.Int, i + 1)
-          .input('prCode', sql.VarChar(50), trunc(p.itemCode || p.ProductID || '', 50))
-          .input('qty', sql.Float, parseFloat(p.quantity) || 0)
-          .input('rate', sql.Real, parseFloat(p.unitPrice) || 0)
-          .input('lineAmount', sql.Float, (parseFloat(p.quantity) * parseFloat(p.unitPrice)) - parseFloat(p.discount || 0))
-          .input('discount', sql.Money, parseFloat(p.discount || 0))
-          .input('bookType', sql.NVarChar(2), 'SO')
-          .input('itemHead', sql.NVarChar(50), trunc(p.productName || '', 50))
-          .input('description', sql.NVarChar(200), trunc(p.remark || '', 200))
-          .query(`
-            INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description)
-            VALUES (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead, @description)
-          `);
+      const BATCH_SIZE = 50;
+      for (let batchStart = 0; batchStart < products.length; batchStart += BATCH_SIZE) {
+        const batch = products.slice(batchStart, Math.min(batchStart + BATCH_SIZE, products.length));
+        const batchRequest = new sql.Request(transaction);
+        batchRequest.timeout = 120000; // 2 min per batch
+
+        const valuePlaceholders = batch.map((p, j) => {
+          const i = batchStart + j;
+          const s = `_${i}`;
+          batchRequest.input(`transNo${s}`, sql.Int, id);
+          batchRequest.input(`srno${s}`, sql.Int, i + 1);
+          batchRequest.input(`prCode${s}`, sql.VarChar(50), trunc(p.itemCode || p.ProductID || '', 50));
+          batchRequest.input(`qty${s}`, sql.Float, parseFloat(p.quantity) || 0);
+          batchRequest.input(`rate${s}`, sql.Real, parseFloat(p.unitPrice) || 0);
+          batchRequest.input(`lineAmt${s}`, sql.Float, (parseFloat(p.quantity) * parseFloat(p.unitPrice)) - parseFloat(p.discount || 0));
+          batchRequest.input(`disc${s}`, sql.Money, parseFloat(p.discount || 0));
+          batchRequest.input(`bkType${s}`, sql.NVarChar(2), 'SO');
+          batchRequest.input(`itHead${s}`, sql.NVarChar(50), trunc(p.productName || '', 50));
+          batchRequest.input(`desc${s}`, sql.NVarChar(200), trunc(p.remark || '', 200));
+          return `(@transNo${s}, @srno${s}, @prCode${s}, @qty${s}, @rate${s}, @lineAmt${s}, @disc${s}, @bkType${s}, @itHead${s}, @desc${s})`;
+        });
+
+        await batchRequest.query(`
+          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description)
+          VALUES ${valuePlaceholders.join(',\n')}
+        `);
       }
     }
 
