@@ -340,6 +340,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
       for (let i = 0; i < products.length; i++) {
         const p = products[i];
         const prodRequest = new sql.Request(transaction);
+        prodRequest.timeout = 60000; // 60 second timeout per item insert
         await prodRequest
           .input('transNo', sql.Int, id)
           .input('srno', sql.Int, i + 1)
@@ -350,9 +351,10 @@ router.put('/:id', authMiddleware, async (req, res) => {
           .input('discount', sql.Money, parseFloat(p.discount || 0))
           .input('bookType', sql.NVarChar(2), 'SO')
           .input('itemHead', sql.NVarChar(50), trunc(p.productName || '', 50))
+          .input('description', sql.NVarChar(200), trunc(p.remark || '', 200))
           .query(`
-            INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead)
-            VALUES (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead)
+            INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description)
+            VALUES (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead, @description)
           `);
       }
     }
