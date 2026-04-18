@@ -93,14 +93,18 @@ router.post('/create', authMiddleware, async (req, res) => {
     for (let i = 0; i < products.length; i++) {
       const p = products[i];
       const prodRequest = new sql.Request(transaction);
+      const discPct = parseFloat(p.discountPercent || 0);
+      const qty     = parseFloat(p.quantity) || 0;
+      const rate    = parseFloat(p.unitPrice) || 0;
+      const discAmt = qty * rate * (discPct / 100);
       await prodRequest
         .input('transNo', sql.Int, nextTransNo)
         .input('srno', sql.Int, i + 1)
         .input('prCode', sql.VarChar(50), trunc(p.itemCode || p.ProductID || '', 50))
-        .input('qty', sql.Float, parseFloat(p.quantity) || 0)
-        .input('rate', sql.Real, parseFloat(p.unitPrice) || 0)
-        .input('lineAmount', sql.Float, (parseFloat(p.quantity) * parseFloat(p.unitPrice)) - parseFloat(p.discount || 0))
-        .input('discount', sql.Money, parseFloat(p.discount || 0))
+        .input('qty', sql.Float, qty)
+        .input('rate', sql.Real, rate)
+        .input('lineAmount', sql.Float, qty * rate - discAmt)   // net amount
+        .input('discount', sql.Money, discPct)                   // store % not ₹
         .input('bookType', sql.NVarChar(2), 'SO')
         .input('itemHead', sql.NVarChar(50), trunc(p.productName || '', 50))
         .input('description', sql.NVarChar(200), trunc(p.remark || '', 200))
@@ -346,13 +350,17 @@ router.put('/:id', authMiddleware, async (req, res) => {
         const valuePlaceholders = batch.map((p, j) => {
           const i = batchStart + j;
           const s = `_${i}`;
+          const discPct = parseFloat(p.discountPercent || 0);
+          const qty     = parseFloat(p.quantity) || 0;
+          const rate    = parseFloat(p.unitPrice) || 0;
+          const discAmt = qty * rate * (discPct / 100);
           batchRequest.input(`transNo${s}`, sql.Int, id);
           batchRequest.input(`srno${s}`, sql.Int, i + 1);
           batchRequest.input(`prCode${s}`, sql.VarChar(50), trunc(p.itemCode || p.ProductID || '', 50));
-          batchRequest.input(`qty${s}`, sql.Float, parseFloat(p.quantity) || 0);
-          batchRequest.input(`rate${s}`, sql.Real, parseFloat(p.unitPrice) || 0);
-          batchRequest.input(`lineAmt${s}`, sql.Float, (parseFloat(p.quantity) * parseFloat(p.unitPrice)) - parseFloat(p.discount || 0));
-          batchRequest.input(`disc${s}`, sql.Money, parseFloat(p.discount || 0));
+          batchRequest.input(`qty${s}`, sql.Float, qty);
+          batchRequest.input(`rate${s}`, sql.Real, rate);
+          batchRequest.input(`lineAmt${s}`, sql.Float, qty * rate - discAmt);  // net amount
+          batchRequest.input(`disc${s}`, sql.Money, discPct);                   // store % not ₹
           batchRequest.input(`bkType${s}`, sql.NVarChar(2), 'SO');
           batchRequest.input(`itHead${s}`, sql.NVarChar(50), trunc(p.productName || '', 50));
           batchRequest.input(`desc${s}`, sql.NVarChar(200), trunc(p.remark || '', 200));
