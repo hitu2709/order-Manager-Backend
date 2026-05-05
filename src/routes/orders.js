@@ -224,7 +224,7 @@ router.get('/list', authMiddleware, async (req, res) => {
         WHERE S_order.book_type = 'SO'
       ) AS PendingOrders
       WHERE ISNULL(BalQty, 0) > 0
-      ORDER BY [Date] DESC
+      ORDER BY [ID] DESC
     `);
 
     // Map to frontend-friendly field names
