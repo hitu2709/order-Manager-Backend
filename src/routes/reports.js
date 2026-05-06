@@ -26,61 +26,69 @@ router.get('/report4', authMiddleware, async (req, res) => {
 });
 
 // GET /api/reports/pending-orders
-// Filters: fromDate, toDate, partyId, orderNo, productId, pendingOnly
+// Calls PendingOrder stored procedure — same params as the original Crystal Reports code
 router.get('/pending-orders', authMiddleware, async (req, res) => {
   try {
     const { fromDate, toDate, partyId, orderNo, productId, pendingOnly } = req.query;
     const pool = getPool();
     const request = pool.request();
-    
-    let query = `
-      SELECT 
-        o.trans_no as OrderID, 
-        a.ac_name as CustomerName, 
-        o.trans_dt as OrderDate, 
-        o.amount as TotalAmount,
-        ISNULL(q.TotalQty, 0) as TotalQty,
-        'Pending' as Status
-      FROM s_order o
-      LEFT JOIN Acmast a ON o.client_code = a.ac_code
-      LEFT JOIN (SELECT trans_no, SUM(qty) as TotalQty FROM ord_tran GROUP BY trans_no) q ON o.trans_no = q.trans_no
-      WHERE 1=1
-    `;
 
-    if (fromDate) {
-      request.input('fromDate', sql.DateTime, new Date(fromDate));
-      query += " AND o.trans_dt >= @fromDate";
-    }
-    if (toDate) {
-      request.input('toDate', sql.DateTime, new Date(toDate));
-      query += " AND o.trans_dt <= @toDate";
-    }
-    if (partyId && partyId !== 'All') {
-      request.input('partyId', sql.VarChar, partyId);
-      query += " AND o.client_code = @partyId";
-    }
-    if (orderNo && orderNo !== 'All') {
-      request.input('orderNo', sql.Int, parseInt(orderNo));
-      query += " AND o.trans_no = @orderNo";
-    }
-    if (productId && productId !== 'All') {
-      // For product filter, we need to check if the product exists in ord_tran for that order
-      request.input('productId', sql.VarChar, productId);
-      query += " AND EXISTS (SELECT 1 FROM ord_tran ot WHERE ot.trans_no = o.trans_no AND ot.pr_code = @productId)";
-    }
-    
-    // In this simplified schema, let's assume 'Pending' depends on a flag or missing dispatch
-    // For now, we'll just return the filtered orders.
-    
-    query += " ORDER BY o.trans_dt DESC, o.trans_no DESC";
-    
-    const result = await request.query(query);
+    // Match exactly: @Acc_Code, @Prod_code, @VouchNo, @Frm_Date, @Till_Date, @Ispending
+    request.input('Acc_Code',  sql.VarChar(20), (partyId   && partyId   !== 'All') ? partyId   : '');
+    request.input('Prod_code', sql.VarChar(50), (productId && productId !== 'All') ? productId : '');
+    request.input('VouchNo',   sql.VarChar(20), (orderNo   && orderNo   !== 'All') ? String(orderNo) : '');
+    request.input('Frm_Date',  sql.DateTime,    fromDate ? new Date(fromDate) : new Date());
+    request.input('Till_Date', sql.DateTime,    toDate   ? new Date(toDate)   : new Date());
+    request.input('Ispending', sql.Bit,         (pendingOnly === 'true' || pendingOnly === true) ? 1 : 0);
+
+    const result = await request.execute('PendingOrder');
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Pending orders report error:', err);
-    return res.status(500).json({ success: false, message: 'Error fetching pending orders report' });
+    // Fallback to raw SQL if stored proc doesn't exist yet
+    try {
+      const { fromDate, toDate, partyId, orderNo, productId, pendingOnly } = req.query;
+      const pool = getPool();
+      const req2 = pool.request();
+      let query = `
+        SELECT
+          o.trans_no        AS OrderNo,
+          Convert(varchar(10), o.trans_dt, 103) AS OrderDate,
+          a.ac_name         AS PartyName,
+          SUM(ISNULL(ot.Qty,0))                                                      AS OrderQty,
+          SUM(ISNULL(ot.Rec_Qty,0))                                                  AS DispatchQty,
+          SUM(ISNULL(ot.Qty,0) - ISNULL(ot.Rec_Qty,0) - ISNULL(ot.SetoffQty,0))    AS BalQty,
+          o.VouchNo         AS VouchNo
+        FROM s_order o
+        LEFT JOIN Acmast a  ON o.client_code = a.ac_code
+        LEFT JOIN ord_tran ot ON o.trans_no = ot.trans_no
+        WHERE o.book_type = 'SO'
+      `;
+      if (partyId && partyId !== 'All') {
+        req2.input('partyId', sql.VarChar, partyId);
+        query += ' AND o.client_code = @partyId';
+      }
+      if (orderNo && orderNo !== 'All') {
+        req2.input('orderNo', sql.Int, parseInt(orderNo));
+        query += ' AND o.trans_no = @orderNo';
+      }
+      if (productId && productId !== 'All') {
+        req2.input('productId', sql.VarChar, productId);
+        query += ' AND EXISTS (SELECT 1 FROM ord_tran x WHERE x.trans_no = o.trans_no AND x.pr_code = @productId)';
+      }
+      if (pendingOnly === 'true' || pendingOnly === true) {
+        query += ' AND (SELECT SUM(ISNULL(Qty,0) - ISNULL(Rec_Qty,0) - ISNULL(SetoffQty,0)) FROM ord_tran WHERE trans_no = o.trans_no) > 0';
+      }
+      query += ' GROUP BY o.trans_no, o.trans_dt, a.ac_name, o.VouchNo ORDER BY o.trans_no DESC';
+      const result2 = await req2.query(query);
+      return res.status(200).json({ success: true, data: result2.recordset });
+    } catch (err2) {
+      console.error('Pending orders fallback error:', err2);
+      return res.status(500).json({ success: false, message: 'Error fetching pending orders report' });
+    }
   }
 });
+
 
 // GET /api/reports/dispatch
 // Filters: fromDate, toDate, partyId, dispatchNo, productId
