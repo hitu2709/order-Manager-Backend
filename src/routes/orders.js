@@ -137,18 +137,32 @@ router.post('/create', authMiddleware, async (req, res) => {
 // Get all parties for dropdown using Acmast
 router.get('/parties', authMiddleware, async (req, res) => {
   try {
+    const { orderNo, productId } = req.query;
     const pool = getPool();
-    const result = await pool.request().query(`
+    const request = pool.request();
+
+    let query = `
       SELECT 
         A.ac_code as PartyID, 
         A.ac_name as PartyName, 
         A.category as Category, 
         A.discper,
         (SELECT TOP 1 LTRIM(RTRIM(ISNULL(transport, ''))) FROM Ac_Excise WHERE LTRIM(RTRIM(ac_Code)) = LTRIM(RTRIM(A.ac_code))) as Transport
-      From Acmast A
-      Where A.grp_name Like '%DEBTORS%' 
-      Order by A.ac_name
-    `);
+      FROM Acmast A
+      WHERE A.grp_name Like '%DEBTORS%'
+    `;
+
+    if (orderNo && orderNo !== 'All') {
+      request.input('orderNo', sql.Int, parseInt(orderNo));
+      query += ' AND A.ac_code IN (SELECT client_code FROM s_order WHERE trans_no = @orderNo)';
+    }
+    if (productId && productId !== 'All') {
+      request.input('productId', sql.VarChar, productId);
+      query += ' AND A.ac_code IN (SELECT o.client_code FROM s_order o JOIN ord_tran ot ON o.trans_no = ot.trans_no WHERE ot.pr_code = @productId)';
+    }
+
+    query += ' ORDER BY A.ac_name';
+    const result = await request.query(query);
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Fetch parties error:', err);
@@ -176,11 +190,34 @@ router.get('/salesmen', authMiddleware, async (req, res) => {
 // Get all products for dropdown using Product (singular)
 router.get('/products', authMiddleware, async (req, res) => {
   try {
+    const { partyId, orderNo } = req.query;
     const pool = getPool();
-    const result = await pool.request().query(`
+    const request = pool.request();
+
+    // If filters applied, only return products in matching orders
+    if ((partyId && partyId !== 'All') || (orderNo && orderNo !== 'All')) {
+      let subQuery = 'SELECT DISTINCT ot.pr_code FROM ord_tran ot JOIN s_order o ON ot.trans_no = o.trans_no WHERE 1=1';
+      if (partyId && partyId !== 'All') {
+        request.input('partyId', sql.VarChar, partyId);
+        subQuery += ' AND o.client_code = @partyId';
+      }
+      if (orderNo && orderNo !== 'All') {
+        request.input('orderNo', sql.Int, parseInt(orderNo));
+        subQuery += ' AND ot.trans_no = @orderNo';
+      }
+      const result = await request.query(`
+        SELECT prod_code as ItemCode, prod_name as ProductName, 0 as Stock, unit1 as Unit, Image as ImageUrl, sale_rate as Rate
+        FROM Product
+        WHERE prod_code IN (${subQuery})
+        ORDER BY prod_code
+      `);
+      return res.status(200).json({ success: true, data: result.recordset });
+    }
+
+    // No filters — return all
+    const result = await request.query(`
       SELECT prod_code as ItemCode, prod_name as ProductName, 0 as Stock, unit1 as Unit, Image as ImageUrl, sale_rate as Rate 
-      FROM Product 
-      ORDER BY prod_code
+      FROM Product ORDER BY prod_code
     `);
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
@@ -190,11 +227,25 @@ router.get('/products', authMiddleware, async (req, res) => {
 });
 
 // GET /api/orders/numbers
-// Get all order numbers for report dropdowns
+// Get order numbers for report dropdowns — supports cascading filters
 router.get('/numbers', authMiddleware, async (req, res) => {
   try {
+    const { partyId, productId } = req.query;
     const pool = getPool();
-    const result = await pool.request().query('SELECT TOP 100 trans_no FROM s_order ORDER BY trans_no DESC');
+    const request = pool.request();
+
+    let query = 'SELECT TOP 200 o.trans_no FROM s_order o WHERE 1=1';
+    if (partyId && partyId !== 'All') {
+      request.input('partyId', sql.VarChar, partyId);
+      query += ' AND o.client_code = @partyId';
+    }
+    if (productId && productId !== 'All') {
+      request.input('productId', sql.VarChar, productId);
+      query += ' AND EXISTS (SELECT 1 FROM ord_tran ot WHERE ot.trans_no = o.trans_no AND ot.pr_code = @productId)';
+    }
+    query += ' ORDER BY o.trans_no DESC';
+
+    const result = await request.query(query);
     return res.status(200).json({ success: true, data: result.recordset.map(r => r.trans_no) });
   } catch (err) {
     console.error('Fetch order numbers error:', err);
