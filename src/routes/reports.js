@@ -235,6 +235,61 @@ router.get('/supplier-orders', authMiddleware, async (req, res) => {
     return res.status(500).json({ success: false, message: 'Error fetching supplier order report' });
   }
 });
+// GET /api/reports/dispatch-numbers
+// Returns dispatch Trans_Nos filtered by partyId and/or productId (for cascading dropdowns)
+router.get('/dispatch-numbers', authMiddleware, async (req, res) => {
+  try {
+    const { partyId, productId } = req.query;
+    const pool = getPool();
+    const request = pool.request();
+
+    let query = `SELECT TOP 200 d.Trans_No, d.Vouchno FROM Rec_Order d WHERE d.book_type = 'DC'`;
+    if (partyId && partyId !== 'All') {
+      request.input('partyId', sql.VarChar, partyId);
+      query += ' AND d.client_code = @partyId';
+    }
+    if (productId && productId !== 'All') {
+      request.input('productId', sql.VarChar, productId);
+      query += ' AND EXISTS (SELECT 1 FROM Rec_Tran rt WHERE rt.Trans_No = d.Trans_No AND rt.pr_code = @productId)';
+    }
+    query += ' ORDER BY d.Trans_No DESC';
+
+    const result = await request.query(query);
+    return res.status(200).json({ success: true, data: result.recordset });
+  } catch (err) {
+    console.error('Dispatch numbers error:', err);
+    return res.status(500).json({ success: false, message: 'Error fetching dispatch numbers' });
+  }
+});
+
+// GET /api/reports/dispatch-products
+// Returns products that appear in dispatches, filtered by partyId and/or dispatchNo
+router.get('/dispatch-products', authMiddleware, async (req, res) => {
+  try {
+    const { partyId, dispatchNo } = req.query;
+    const pool = getPool();
+    const request = pool.request();
+
+    let subQuery = `SELECT DISTINCT rt.pr_code FROM Rec_Tran rt JOIN Rec_Order d ON rt.Trans_No = d.Trans_No WHERE d.book_type = 'DC'`;
+    if (partyId && partyId !== 'All') {
+      request.input('partyId', sql.VarChar, partyId);
+      subQuery += ' AND d.client_code = @partyId';
+    }
+    if (dispatchNo && dispatchNo !== 'All') {
+      request.input('dispatchNo', sql.Int, parseInt(dispatchNo));
+      subQuery += ' AND rt.Trans_No = @dispatchNo';
+    }
+
+    const result = await request.query(`
+      SELECT prod_code as ItemCode, prod_name as ProductName, 0 as Stock, unit1 as Unit
+      FROM Product WHERE prod_code IN (${subQuery})
+      ORDER BY prod_code
+    `);
+    return res.status(200).json({ success: true, data: result.recordset });
+  } catch (err) {
+    console.error('Dispatch products error:', err);
+    return res.status(500).json({ success: false, message: 'Error fetching dispatch products' });
+  }
+});
 
 module.exports = router;
-
