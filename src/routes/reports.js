@@ -53,15 +53,18 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
       let query = `
         SELECT
           o.trans_no        AS OrderNo,
-          Convert(varchar(10), o.trans_dt, 103) AS OrderDate,
+          o.VouchNo         AS VouchNo,
+          CONVERT(varchar(10), o.trans_dt, 103) AS OrderDate,
           a.ac_name         AS PartyName,
-          SUM(ISNULL(ot.Qty,0))                                                      AS OrderQty,
-          SUM(ISNULL(ot.Rec_Qty,0))                                                  AS DispatchQty,
-          SUM(ISNULL(ot.Qty,0) - ISNULL(ot.Rec_Qty,0) - ISNULL(ot.SetoffQty,0))    AS BalQty,
-          o.VouchNo         AS VouchNo
+          p.prod_code       AS ItemCode,
+          p.prod_name       AS ProductName,
+          ISNULL(ot.Qty, 0)                                                         AS OrderQty,
+          ISNULL(ot.Rec_Qty, 0)                                                     AS DispatchQty,
+          ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0)     AS BalQty
         FROM s_order o
-        LEFT JOIN Acmast a  ON o.client_code = a.ac_code
+        LEFT JOIN Acmast a   ON o.client_code = a.ac_code
         LEFT JOIN ord_tran ot ON o.trans_no = ot.trans_no
+        LEFT JOIN Product p  ON ot.pr_code = p.prod_code
         WHERE o.book_type = 'SO'
       `;
       if (partyId && partyId !== 'All') {
@@ -74,14 +77,15 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
       }
       if (productId && productId !== 'All') {
         req2.input('productId', sql.VarChar, productId);
-        query += ' AND EXISTS (SELECT 1 FROM ord_tran x WHERE x.trans_no = o.trans_no AND x.pr_code = @productId)';
+        query += ' AND ot.pr_code = @productId';
       }
       if (pendingOnly === 'true' || pendingOnly === true) {
-        query += ' AND (SELECT SUM(ISNULL(Qty,0) - ISNULL(Rec_Qty,0) - ISNULL(SetoffQty,0)) FROM ord_tran WHERE trans_no = o.trans_no) > 0';
+        query += ' AND (ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0)) > 0';
       }
-      query += ' GROUP BY o.trans_no, o.trans_dt, a.ac_name, o.VouchNo ORDER BY o.trans_no DESC';
+      query += ' ORDER BY o.trans_no DESC, p.prod_code';
       const result2 = await req2.query(query);
       return res.status(200).json({ success: true, data: result2.recordset });
+
     } catch (err2) {
       console.error('Pending orders fallback error:', err2);
       return res.status(500).json({ success: false, message: 'Error fetching pending orders report' });

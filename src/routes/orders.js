@@ -227,14 +227,15 @@ router.get('/products', authMiddleware, async (req, res) => {
 });
 
 // GET /api/orders/numbers
-// Get order numbers for report dropdowns — supports cascading filters
+// Returns {trans_no, VouchNo, trans_dt} for display as DD/MM/YYYY(VouchNo)
 router.get('/numbers', authMiddleware, async (req, res) => {
   try {
     const { partyId, productId } = req.query;
     const pool = getPool();
     const request = pool.request();
 
-    let query = 'SELECT TOP 200 o.trans_no FROM s_order o WHERE 1=1';
+    let query = `SELECT TOP 200 o.trans_no, o.VouchNo, CONVERT(varchar(10), o.trans_dt, 103) as trans_dt
+                 FROM s_order o WHERE 1=1`;
     if (partyId && partyId !== 'All') {
       request.input('partyId', sql.VarChar, partyId);
       query += ' AND o.client_code = @partyId';
@@ -246,7 +247,8 @@ router.get('/numbers', authMiddleware, async (req, res) => {
     query += ' ORDER BY o.trans_no DESC';
 
     const result = await request.query(query);
-    return res.status(200).json({ success: true, data: result.recordset.map(r => r.trans_no) });
+    // Return full objects: {trans_no, VouchNo, trans_dt}
+    return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Fetch order numbers error:', err);
     return res.status(500).json({ success: false, message: 'Error fetching order numbers' });
