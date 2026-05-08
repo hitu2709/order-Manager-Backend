@@ -26,70 +26,61 @@ router.get('/report4', authMiddleware, async (req, res) => {
 });
 
 // GET /api/reports/pending-orders
-// Calls PendingOrder stored procedure — same params as the original Crystal Reports code
+// Direct SQL — returns one row per product per order with known column names
 router.get('/pending-orders', authMiddleware, async (req, res) => {
   try {
     const { fromDate, toDate, partyId, orderNo, productId, pendingOnly } = req.query;
     const pool = getPool();
     const request = pool.request();
 
-    // Match exactly: @Acc_Code, @Prod_code, @VouchNo, @Frm_Date, @Till_Date, @Ispending
-    request.input('Acc_Code',  sql.VarChar(20), (partyId   && partyId   !== 'All') ? partyId   : '');
-    request.input('Prod_code', sql.VarChar(50), (productId && productId !== 'All') ? productId : '');
-    request.input('VouchNo',   sql.VarChar(20), (orderNo   && orderNo   !== 'All') ? String(orderNo) : '');
-    request.input('Frm_Date',  sql.DateTime,    fromDate ? new Date(fromDate) : new Date());
-    request.input('Till_Date', sql.DateTime,    toDate   ? new Date(toDate)   : new Date());
-    request.input('Ispending', sql.Bit,         (pendingOnly === 'true' || pendingOnly === true) ? 1 : 0);
+    let query = `
+      SELECT
+        o.trans_no        AS OrderNo,
+        o.VouchNo         AS VouchNo,
+        CONVERT(varchar(10), o.trans_dt, 103) AS OrderDate,
+        a.ac_name         AS PartyName,
+        p.prod_code       AS ItemCode,
+        p.prod_name       AS ProductName,
+        ISNULL(ot.Qty, 0)                                                       AS OrderQty,
+        ISNULL(ot.Rec_Qty, 0)                                                   AS DispatchQty,
+        ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0)   AS BalQty
+      FROM s_order o
+      LEFT JOIN Acmast a    ON o.client_code = a.ac_code
+      LEFT JOIN ord_tran ot ON o.trans_no    = ot.trans_no
+      LEFT JOIN Product p   ON ot.pr_code    = p.prod_code
+      WHERE o.book_type = 'SO'
+    `;
 
-    const result = await request.execute('PendingOrder');
+    if (fromDate) {
+      request.input('fromDate', sql.DateTime, new Date(fromDate));
+      query += ' AND o.trans_dt >= @fromDate';
+    }
+    if (toDate) {
+      request.input('toDate', sql.DateTime, new Date(toDate));
+      query += ' AND o.trans_dt <= @toDate';
+    }
+    if (partyId && partyId !== 'All') {
+      request.input('partyId', sql.VarChar, partyId);
+      query += ' AND o.client_code = @partyId';
+    }
+    if (orderNo && orderNo !== 'All') {
+      request.input('orderNo', sql.Int, parseInt(orderNo));
+      query += ' AND o.trans_no = @orderNo';
+    }
+    if (productId && productId !== 'All') {
+      request.input('productId', sql.VarChar, productId);
+      query += ' AND ot.pr_code = @productId';
+    }
+    if (pendingOnly === 'true' || pendingOnly === true) {
+      query += ' AND (ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0)) > 0';
+    }
+    query += ' ORDER BY o.trans_no DESC, p.prod_code';
+
+    const result = await request.query(query);
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Pending orders report error:', err);
-    // Fallback to raw SQL if stored proc doesn't exist yet
-    try {
-      const { fromDate, toDate, partyId, orderNo, productId, pendingOnly } = req.query;
-      const pool = getPool();
-      const req2 = pool.request();
-      let query = `
-        SELECT
-          o.trans_no        AS OrderNo,
-          o.VouchNo         AS VouchNo,
-          CONVERT(varchar(10), o.trans_dt, 103) AS OrderDate,
-          a.ac_name         AS PartyName,
-          p.prod_code       AS ItemCode,
-          p.prod_name       AS ProductName,
-          ISNULL(ot.Qty, 0)                                                         AS OrderQty,
-          ISNULL(ot.Rec_Qty, 0)                                                     AS DispatchQty,
-          ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0)     AS BalQty
-        FROM s_order o
-        LEFT JOIN Acmast a   ON o.client_code = a.ac_code
-        LEFT JOIN ord_tran ot ON o.trans_no = ot.trans_no
-        LEFT JOIN Product p  ON ot.pr_code = p.prod_code
-        WHERE o.book_type = 'SO'
-      `;
-      if (partyId && partyId !== 'All') {
-        req2.input('partyId', sql.VarChar, partyId);
-        query += ' AND o.client_code = @partyId';
-      }
-      if (orderNo && orderNo !== 'All') {
-        req2.input('orderNo', sql.Int, parseInt(orderNo));
-        query += ' AND o.trans_no = @orderNo';
-      }
-      if (productId && productId !== 'All') {
-        req2.input('productId', sql.VarChar, productId);
-        query += ' AND ot.pr_code = @productId';
-      }
-      if (pendingOnly === 'true' || pendingOnly === true) {
-        query += ' AND (ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0)) > 0';
-      }
-      query += ' ORDER BY o.trans_no DESC, p.prod_code';
-      const result2 = await req2.query(query);
-      return res.status(200).json({ success: true, data: result2.recordset });
-
-    } catch (err2) {
-      console.error('Pending orders fallback error:', err2);
-      return res.status(500).json({ success: false, message: 'Error fetching pending orders report' });
-    }
+    return res.status(500).json({ success: false, message: 'Error fetching pending orders report' });
   }
 });
 
