@@ -64,8 +64,15 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
       query += ' AND o.client_code = @partyId';
     }
     if (orderNo && orderNo !== 'All') {
-      request.input('orderNo', sql.Int, parseInt(orderNo));
-      query += ' AND o.trans_no = @orderNo';
+      // Support comma-separated list for multi-select (e.g. "100001,100002,100003")
+      const orderNos = String(orderNo).split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+      if (orderNos.length === 1) {
+        request.input('orderNo', sql.Int, orderNos[0]);
+        query += ' AND o.trans_no = @orderNo';
+      } else if (orderNos.length > 1) {
+        // Safely inject validated integers directly (no string injection risk)
+        query += ` AND o.trans_no IN (${orderNos.join(',')})`;
+      }
     }
     if (productId && productId !== 'All') {
       request.input('productId', sql.VarChar, productId);
