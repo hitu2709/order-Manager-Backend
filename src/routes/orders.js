@@ -228,7 +228,7 @@ router.get('/products', authMiddleware, async (req, res) => {
 });
 
 // GET /api/orders/product-stock
-// Calls GetProductStockSummary SP and returns the current FY stock for a single product
+// Calls GetProductStockSummary SP — SP returns: ProductCode, ProdName, Unit, Rate, Stock
 router.get('/product-stock', authMiddleware, async (req, res) => {
   const { productCode } = req.query;
   if (!productCode) {
@@ -237,7 +237,6 @@ router.get('/product-stock', authMiddleware, async (req, res) => {
   try {
     const pool = getPool();
     const now = new Date();
-    // Financial year: April 1 of current FY
     const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
     const fromDate = `01/04/${fyStartYear}`;
     const tillDate = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
@@ -249,69 +248,21 @@ router.get('/product-stock', authMiddleware, async (req, res) => {
 
     const rows = result.recordset || [];
 
-    // Log ALL column names from first row for debugging
-    if (rows.length > 0) {
-      console.log('[product-stock] SP columns:', Object.keys(rows[0]));
-    }
+    // SP aliases: ProductCode, ProdName, Unit, Rate, Stock
+    const row = rows.find(r =>
+      String(r.ProductCode || '').trim().toLowerCase() ===
+      String(productCode).trim().toLowerCase()
+    );
 
-    // Find the row matching the requested product code — check every possible code column
-    const row = rows.find(r => {
-      const code = String(
-        r.pr_code ?? r.ItemCode ?? r.ProdCode ?? r.Code ?? r.Pr_Code ??
-        r.prod_code ?? r.item_code ?? r.ProductCode ?? ''
-      ).trim().toLowerCase();
-      return code === String(productCode).trim().toLowerCase();
-    });
+    const stock = row ? parseFloat(row.Stock || 0) : 0;
 
-    // Log the matched row so we can see the exact column names + values
-    if (row) {
-      console.log('[product-stock] matched row:', JSON.stringify(row));
-    } else {
-      console.log('[product-stock] no row found for productCode:', productCode);
-      console.log('[product-stock] available codes:', rows.slice(0,5).map(r =>
-        r.pr_code ?? r.ItemCode ?? r.ProdCode ?? r.Code ?? r.Pr_Code ?? r.prod_code ?? '?'
-      ));
-    }
-
-    // Extract stock — use EVERY numeric column with a non-zero value as fallback
-    let stock = 0;
-    let stockColumn = null;
-    if (row) {
-      // Try known names first
-      const knownNames = ['StkQty','Stock','BalStock','BalQty','ClsStock',
-                          'ClosingStock','Closing','NetStock','StockQty',
-                          'Clsstock','clsstock','bal_stock','bal_qty','stk_qty'];
-      for (const col of knownNames) {
-        if (row[col] !== undefined && row[col] !== null) {
-          stock = parseFloat(row[col]) || 0;
-          stockColumn = col;
-          break;
-        }
-      }
-      // If still 0, pick ANY numeric column that isn't the code/name columns
-      if (stock === 0) {
-        for (const [k, v] of Object.entries(row)) {
-          if (typeof v === 'number' && v !== 0 && !k.toLowerCase().includes('code') && !k.toLowerCase().includes('name')) {
-            stock = v;
-            stockColumn = k + '(auto)';
-            break;
-          }
-        }
-      }
-    }
-
-    return res.status(200).json({
-      success: true,
-      stock,
-      stockColumn,                      // which column was used
-      allKeys: row ? Object.keys(row) : [],  // all column names for debugging
-      rawRow: row || null,              // full row so we can see values
-    });
+    return res.status(200).json({ success: true, stock });
   } catch (err) {
     console.error('Product stock error:', err);
     return res.status(500).json({ success: false, message: 'Error fetching stock: ' + err.message });
   }
 });
+
 
 
 // GET /api/orders/numbers
