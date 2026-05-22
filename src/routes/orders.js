@@ -108,9 +108,10 @@ router.post('/create', authMiddleware, async (req, res) => {
         .input('bookType', sql.NVarChar(2), 'SO')
         .input('itemHead', sql.NVarChar(50), trunc(p.productName || '', 50))
         .input('description', sql.NVarChar(200), trunc(p.remark || '', 200))
+        .input('stkQty', sql.Float, parseFloat(p.stkQty || 0))
         .query(`
-          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description)
-          VALUES (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead, @description)
+          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description, StkQty)
+          VALUES (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead, @description, @stkQty)
         `);
     }
 
@@ -223,6 +224,48 @@ router.get('/products', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Fetch products error:', err);
     return res.status(500).json({ success: false, message: 'Error fetching products' });
+  }
+});
+
+// GET /api/orders/product-stock
+// Calls GetProductStockSummary SP and returns the current FY stock for a single product
+router.get('/product-stock', authMiddleware, async (req, res) => {
+  const { productCode } = req.query;
+  if (!productCode) {
+    return res.status(400).json({ success: false, message: 'productCode is required' });
+  }
+  try {
+    const pool = getPool();
+    const now = new Date();
+    // Financial year: April 1 of current FY
+    const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const fromDate = `01/04/${fyStartYear}`;
+    const tillDate = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+
+    const result = await pool.request()
+      .input('FromDate', sql.VarChar, fromDate)
+      .input('TillDate', sql.VarChar, tillDate)
+      .execute('GetProductStockSummary');
+
+    const rows = result.recordset || [];
+    // Find the row matching the requested product code
+    const row = rows.find(r =>
+      String(r.pr_code || r.ItemCode || r.ProdCode || r.Code || r.Pr_Code || '').trim().toLowerCase() ===
+      String(productCode).trim().toLowerCase()
+    );
+
+    // Try every common column name the SP might use for closing/balance stock
+    let stock = 0;
+    if (row) {
+      const val = row.StkQty ?? row.Stock ?? row.BalStock ?? row.BalQty ??
+                  row.ClsStock ?? row.ClosingStock ?? row.Closing ?? row.NetStock ?? 0;
+      stock = parseFloat(val) || 0;
+    }
+
+    return res.status(200).json({ success: true, stock });
+  } catch (err) {
+    console.error('Product stock error:', err);
+    return res.status(500).json({ success: false, message: 'Error fetching stock: ' + err.message });
   }
 });
 
@@ -417,11 +460,12 @@ router.put('/:id', authMiddleware, async (req, res) => {
           batchRequest.input(`bkType${s}`, sql.NVarChar(2), 'SO');
           batchRequest.input(`itHead${s}`, sql.NVarChar(50), trunc(p.productName || '', 50));
           batchRequest.input(`desc${s}`, sql.NVarChar(200), trunc(p.remark || '', 200));
-          return `(@transNo${s}, @srno${s}, @prCode${s}, @qty${s}, @rate${s}, @lineAmt${s}, @disc${s}, @bkType${s}, @itHead${s}, @desc${s})`;
+          batchRequest.input(`stkQty${s}`, sql.Float, parseFloat(p.stkQty || 0));
+          return `(@transNo${s}, @srno${s}, @prCode${s}, @qty${s}, @rate${s}, @lineAmt${s}, @disc${s}, @bkType${s}, @itHead${s}, @desc${s}, @stkQty${s})`;
         });
 
         await batchRequest.query(`
-          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description)
+          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description, StkQty)
           VALUES ${valuePlaceholders.join(',\n')}
         `);
       }
