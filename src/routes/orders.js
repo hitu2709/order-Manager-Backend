@@ -246,15 +246,31 @@ router.get('/product-stock', authMiddleware, async (req, res) => {
       .input('TillDate', sql.VarChar, tillDate)
       .execute('GetProductStockSummary');
 
-    const rows = result.recordset || [];
+    // SP may return multiple result sets — scan ALL of them to find the one
+    // that has 'ProductCode' and 'Stock' columns (the final SELECT in the SP)
+    const allRecordsets = result.recordsets || [result.recordset || []];
+    let rows = [];
+    for (const rs of allRecordsets) {
+      if (rs && rs.length > 0 && rs[0].hasOwnProperty('ProductCode') && rs[0].hasOwnProperty('Stock')) {
+        rows = rs;
+        break;
+      }
+    }
 
-    // SP aliases: ProductCode, ProdName, Unit, Rate, Stock
+    // Fall back to first non-empty recordset if the above didn't match
+    if (rows.length === 0) {
+      for (const rs of allRecordsets) {
+        if (rs && rs.length > 0) { rows = rs; break; }
+      }
+    }
+
+    // Match by ProductCode (SP alias: p.Prod_Code AS ProductCode)
     const row = rows.find(r =>
       String(r.ProductCode || '').trim().toLowerCase() ===
       String(productCode).trim().toLowerCase()
     );
 
-    const stock = row ? parseFloat(row.Stock || 0) : 0;
+    const stock = row ? parseFloat(row.Stock ?? 0) : 0;
 
     return res.status(200).json({ success: true, stock });
   } catch (err) {
