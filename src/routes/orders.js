@@ -188,14 +188,49 @@ router.get('/salesmen', authMiddleware, async (req, res) => {
 });
 
 // GET /api/products
-// Get all products for dropdown using Product (singular)
+// Get all products for dropdown — Stock is merged from GetProductStockSummary SP
 router.get('/products', authMiddleware, async (req, res) => {
   try {
     const { partyId, orderNo } = req.query;
     const pool = getPool();
-    const request = pool.request();
 
-    // If filters applied, only return products in matching orders
+    // ── 1. Get stock map from SP (runs in parallel with product query) ──────
+    const now = new Date();
+    const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const fromDate = `01/04/${fyStartYear}`;
+    const tillDate = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+
+    // Build stock map: { 'PROD_CODE' -> stockValue }
+    let stockMap = {};
+    try {
+      const spResult = await pool.request()
+        .input('FromDate', sql.VarChar, fromDate)
+        .input('TillDate', sql.VarChar, tillDate)
+        .execute('GetProductStockSummary');
+      // Scan all result sets — pick the one with ProductCode + Stock columns
+      const allSets = spResult.recordsets || [spResult.recordset || []];
+      let spRows = [];
+      for (const rs of allSets) {
+        if (rs && rs.length > 0 && rs[0].hasOwnProperty('ProductCode') && rs[0].hasOwnProperty('Stock')) {
+          spRows = rs; break;
+        }
+      }
+      if (spRows.length === 0) {
+        for (const rs of allSets) { if (rs && rs.length > 0) { spRows = rs; break; } }
+      }
+      spRows.forEach(r => {
+        const code = String(r.ProductCode || '').trim().toUpperCase();
+        if (code) stockMap[code] = parseFloat(r.Stock ?? 0);
+      });
+    } catch (spErr) {
+      // If SP fails, continue with 0 stock — don't break the product list
+      console.error('Stock SP error (non-fatal):', spErr.message);
+    }
+
+    // ── 2. Query product list ─────────────────────────────────────────────────
+    const request = pool.request();
+    let productRows = [];
+
     if ((partyId && partyId !== 'All') || (orderNo && orderNo !== 'All')) {
       let subQuery = 'SELECT DISTINCT ot.pr_code FROM ord_tran ot JOIN s_order o ON ot.trans_no = o.trans_no WHERE 1=1';
       if (partyId && partyId !== 'All') {
@@ -207,78 +242,30 @@ router.get('/products', authMiddleware, async (req, res) => {
         subQuery += ' AND ot.trans_no = @orderNo';
       }
       const result = await request.query(`
-        SELECT prod_code as ItemCode, prod_name as ProductName, 0 as Stock, unit1 as Unit, Image as ImageUrl, sale_rate as Rate
-        FROM Product
-        WHERE prod_code IN (${subQuery})
-        ORDER BY prod_code
+        SELECT prod_code as ItemCode, prod_name as ProductName, unit1 as Unit, Image as ImageUrl, sale_rate as Rate
+        FROM Product WHERE prod_code IN (${subQuery}) ORDER BY prod_code
       `);
-      return res.status(200).json({ success: true, data: result.recordset });
+      productRows = result.recordset;
+    } else {
+      const result = await request.query(`
+        SELECT prod_code as ItemCode, prod_name as ProductName, unit1 as Unit, Image as ImageUrl, sale_rate as Rate
+        FROM Product ORDER BY prod_code
+      `);
+      productRows = result.recordset;
     }
 
-    // No filters — return all
-    const result = await request.query(`
-      SELECT prod_code as ItemCode, prod_name as ProductName, 0 as Stock, unit1 as Unit, Image as ImageUrl, sale_rate as Rate 
-      FROM Product ORDER BY prod_code
-    `);
-    return res.status(200).json({ success: true, data: result.recordset });
+    // ── 3. Merge stock into each product ─────────────────────────────────────
+    const data = productRows.map(p => ({
+      ...p,
+      Stock: stockMap[String(p.ItemCode || '').trim().toUpperCase()] ?? 0,
+    }));
+
+    return res.status(200).json({ success: true, data });
   } catch (err) {
     console.error('Fetch products error:', err);
     return res.status(500).json({ success: false, message: 'Error fetching products' });
   }
 });
-
-// GET /api/orders/product-stock
-// Calls GetProductStockSummary SP — SP returns: ProductCode, ProdName, Unit, Rate, Stock
-router.get('/product-stock', authMiddleware, async (req, res) => {
-  const { productCode } = req.query;
-  if (!productCode) {
-    return res.status(400).json({ success: false, message: 'productCode is required' });
-  }
-  try {
-    const pool = getPool();
-    const now = new Date();
-    const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-    const fromDate = `01/04/${fyStartYear}`;
-    const tillDate = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
-
-    const result = await pool.request()
-      .input('FromDate', sql.VarChar, fromDate)
-      .input('TillDate', sql.VarChar, tillDate)
-      .execute('GetProductStockSummary');
-
-    // SP may return multiple result sets — scan ALL of them to find the one
-    // that has 'ProductCode' and 'Stock' columns (the final SELECT in the SP)
-    const allRecordsets = result.recordsets || [result.recordset || []];
-    let rows = [];
-    for (const rs of allRecordsets) {
-      if (rs && rs.length > 0 && rs[0].hasOwnProperty('ProductCode') && rs[0].hasOwnProperty('Stock')) {
-        rows = rs;
-        break;
-      }
-    }
-
-    // Fall back to first non-empty recordset if the above didn't match
-    if (rows.length === 0) {
-      for (const rs of allRecordsets) {
-        if (rs && rs.length > 0) { rows = rs; break; }
-      }
-    }
-
-    // Match by ProductCode (SP alias: p.Prod_Code AS ProductCode)
-    const row = rows.find(r =>
-      String(r.ProductCode || '').trim().toLowerCase() ===
-      String(productCode).trim().toLowerCase()
-    );
-
-    const stock = row ? parseFloat(row.Stock ?? 0) : 0;
-
-    return res.status(200).json({ success: true, stock });
-  } catch (err) {
-    console.error('Product stock error:', err);
-    return res.status(500).json({ success: false, message: 'Error fetching stock: ' + err.message });
-  }
-});
-
 
 
 // GET /api/orders/numbers
