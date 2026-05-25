@@ -188,27 +188,54 @@ router.get('/salesmen', authMiddleware, async (req, res) => {
 });
 
 // GET /api/products
-// Get all products for dropdown — Stock is merged from GetProductStockSummary SP
+// Get all products for dropdown — Stock merged from GetProductStockSummary SP (parallel fetch)
 router.get('/products', authMiddleware, async (req, res) => {
   try {
     const { partyId, orderNo } = req.query;
     const pool = getPool();
 
-    // ── 1. Get stock map from SP (runs in parallel with product query) ──────
+    // ── FY date range ──────────────────────────────────────────────────────────
     const now = new Date();
     const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
     const fromDate = `01/04/${fyStartYear}`;
     const tillDate = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
 
-    // Build stock map: { 'PROD_CODE' -> stockValue }
+    // ── Build product query ────────────────────────────────────────────────────
+    const prodRequest = pool.request();
+    let productQuery;
+    if ((partyId && partyId !== 'All') || (orderNo && orderNo !== 'All')) {
+      let subQ = 'SELECT DISTINCT ot.pr_code FROM ord_tran ot JOIN s_order o ON ot.trans_no = o.trans_no WHERE 1=1';
+      if (partyId && partyId !== 'All') {
+        prodRequest.input('partyId', sql.VarChar, partyId);
+        subQ += ' AND o.client_code = @partyId';
+      }
+      if (orderNo && orderNo !== 'All') {
+        prodRequest.input('orderNo', sql.Int, parseInt(orderNo));
+        subQ += ' AND ot.trans_no = @orderNo';
+      }
+      productQuery = prodRequest.query(`
+        SELECT prod_code as ItemCode, prod_name as ProductName, unit1 as Unit, Image as ImageUrl, sale_rate as Rate
+        FROM Product WHERE prod_code IN (${subQ}) ORDER BY prod_code
+      `);
+    } else {
+      productQuery = prodRequest.query(`
+        SELECT prod_code as ItemCode, prod_name as ProductName, unit1 as Unit, Image as ImageUrl, sale_rate as Rate
+        FROM Product ORDER BY prod_code
+      `);
+    }
+
+    // ── Run SP + product query IN PARALLEL ────────────────────────────────────
+    const spQuery = pool.request()
+      .input('FromDate', sql.VarChar, fromDate)
+      .input('TillDate', sql.VarChar, tillDate)
+      .execute('GetProductStockSummary');
+
+    const [spSettled, prodSettled] = await Promise.allSettled([spQuery, productQuery]);
+
+    // ── Build stock map from SP result (non-fatal if SP fails) ────────────────
     let stockMap = {};
-    try {
-      const spResult = await pool.request()
-        .input('FromDate', sql.VarChar, fromDate)
-        .input('TillDate', sql.VarChar, tillDate)
-        .execute('GetProductStockSummary');
-      // Scan all result sets — pick the one with ProductCode + Stock columns
-      const allSets = spResult.recordsets || [spResult.recordset || []];
+    if (spSettled.status === 'fulfilled') {
+      const allSets = spSettled.value.recordsets || [spSettled.value.recordset || []];
       let spRows = [];
       for (const rs of allSets) {
         if (rs && rs.length > 0 && rs[0].hasOwnProperty('ProductCode') && rs[0].hasOwnProperty('Stock')) {
@@ -222,39 +249,17 @@ router.get('/products', authMiddleware, async (req, res) => {
         const code = String(r.ProductCode || '').trim().toUpperCase();
         if (code) stockMap[code] = parseFloat(r.Stock ?? 0);
       });
-    } catch (spErr) {
-      // If SP fails, continue with 0 stock — don't break the product list
-      console.error('Stock SP error (non-fatal):', spErr.message);
-    }
-
-    // ── 2. Query product list ─────────────────────────────────────────────────
-    const request = pool.request();
-    let productRows = [];
-
-    if ((partyId && partyId !== 'All') || (orderNo && orderNo !== 'All')) {
-      let subQuery = 'SELECT DISTINCT ot.pr_code FROM ord_tran ot JOIN s_order o ON ot.trans_no = o.trans_no WHERE 1=1';
-      if (partyId && partyId !== 'All') {
-        request.input('partyId', sql.VarChar, partyId);
-        subQuery += ' AND o.client_code = @partyId';
-      }
-      if (orderNo && orderNo !== 'All') {
-        request.input('orderNo', sql.Int, parseInt(orderNo));
-        subQuery += ' AND ot.trans_no = @orderNo';
-      }
-      const result = await request.query(`
-        SELECT prod_code as ItemCode, prod_name as ProductName, unit1 as Unit, Image as ImageUrl, sale_rate as Rate
-        FROM Product WHERE prod_code IN (${subQuery}) ORDER BY prod_code
-      `);
-      productRows = result.recordset;
     } else {
-      const result = await request.query(`
-        SELECT prod_code as ItemCode, prod_name as ProductName, unit1 as Unit, Image as ImageUrl, sale_rate as Rate
-        FROM Product ORDER BY prod_code
-      `);
-      productRows = result.recordset;
+      console.error('Stock SP error (non-fatal):', spSettled.reason?.message);
     }
 
-    // ── 3. Merge stock into each product ─────────────────────────────────────
+    // ── Product query MUST succeed ────────────────────────────────────────────
+    if (prodSettled.status === 'rejected') {
+      throw prodSettled.reason;
+    }
+    const productRows = prodSettled.value.recordset || [];
+
+    // ── Merge stock into each product ─────────────────────────────────────────
     const data = productRows.map(p => ({
       ...p,
       Stock: stockMap[String(p.ItemCode || '').trim().toUpperCase()] ?? 0,
