@@ -78,7 +78,7 @@ router.post('/create', authMiddleware, async (req, res) => {
       .input('clientCode', sql.NVarChar(7), trunc(partyId, 7))
       .input('amount', sql.Float, calcTotal)
       .input('transport', sql.NVarChar(100), trunc(transport, 100))
-      .input('spNote', sql.NText, notes || '')
+      .input('inspection', sql.NVarChar(500), trunc(notes || '', 500))
       .input('username', sql.VarChar(100), trunc(String((req.user && (req.user.userId || req.user.username)) || 'admin'), 100))
       .input('brokerCode', sql.NVarChar(7), trunc(salesmanId || '', 7))
       .input('bookType', sql.NVarChar(2), 'SO')
@@ -86,7 +86,7 @@ router.post('/create', authMiddleware, async (req, res) => {
       .input('addStock', sql.NVarChar(1), '')
       .query(`
         INSERT INTO s_order (trans_no, trans_dt, client_code, amount, transport, Inspection, username, Broker_code, book_type, VouchNo, AddStock)
-        VALUES (@transNo, @transDt, @clientCode, @amount, @transport, @Inspection, @username, @brokerCode, @bookType, @vouchNo, @addStock)
+        VALUES (@transNo, @transDt, @clientCode, @amount, @transport, @inspection, @username, @brokerCode, @bookType, @vouchNo, @addStock)
       `);
 
     // 3. Insert each product into ord_tran
