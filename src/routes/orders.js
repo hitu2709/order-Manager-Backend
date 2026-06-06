@@ -85,8 +85,8 @@ router.post('/create', authMiddleware, async (req, res) => {
       .input('vouchNo', sql.NVarChar(10), trunc(String(nextVouchNo), 10))
       .input('addStock', sql.NVarChar(1), '')
       .query(`
-        INSERT INTO s_order (trans_no, trans_dt, client_code, amount, transport, Sp_Note, username, Broker_code, book_type, VouchNo, AddStock)
-        VALUES (@transNo, @transDt, @clientCode, @amount, @transport, @spNote, @username, @brokerCode, @bookType, @vouchNo, @addStock)
+        INSERT INTO s_order (trans_no, trans_dt, client_code, amount, transport, Inspection, username, Broker_code, book_type, VouchNo, AddStock)
+        VALUES (@transNo, @transDt, @clientCode, @amount, @transport, @Inspection, @username, @brokerCode, @bookType, @vouchNo, @addStock)
       `);
 
     // 3. Insert each product into ord_tran
