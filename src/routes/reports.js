@@ -155,7 +155,7 @@ router.get('/dispatch', authMiddleware, async (req, res) => {
 });
 
 // GET /api/reports/stock
-// Filters: fromDate, toDate, partyId, productId, summary
+// Filters: fromDate, toDate, partyId (comma-separated), productId (comma-separated), summary
 router.get('/stock', authMiddleware, async (req, res) => {
   try {
     const { fromDate, toDate, partyId, productId, summary } = req.query;
@@ -185,12 +185,30 @@ router.get('/stock', authMiddleware, async (req, res) => {
       query += ' AND o.trans_dt <= @toDate';
     }
     if (partyId && partyId !== 'All') {
-      request.input('partyId', sql.VarChar, partyId);
-      query += ' AND o.client_code = @partyId';
+      const partyIds = String(partyId).split(',').map(id => id.trim()).filter(Boolean);
+      if (partyIds.length === 1) {
+        request.input('partyId', sql.VarChar, partyIds[0]);
+        query += ' AND o.client_code = @partyId';
+      } else if (partyIds.length > 1) {
+        const paramNames = partyIds.map((id, idx) => {
+          request.input(`partyId${idx}`, sql.VarChar, id);
+          return `@partyId${idx}`;
+        });
+        query += ` AND o.client_code IN (${paramNames.join(',')})`;
+      }
     }
     if (productId && productId !== 'All') {
-      request.input('productId', sql.VarChar, productId);
-      query += ' AND ot.pr_code = @productId';
+      const productIds = String(productId).split(',').map(id => id.trim()).filter(Boolean);
+      if (productIds.length === 1) {
+        request.input('productId', sql.VarChar, productIds[0]);
+        query += ' AND ot.pr_code = @productId';
+      } else if (productIds.length > 1) {
+        const paramNames = productIds.map((id, idx) => {
+          request.input(`productId${idx}`, sql.VarChar, id);
+          return `@productId${idx}`;
+        });
+        query += ` AND ot.pr_code IN (${paramNames.join(',')})`;
+      }
     }
 
     query += ' GROUP BY p.pr_code, p.pr_name ORDER BY p.pr_name ASC';
@@ -202,6 +220,7 @@ router.get('/stock', authMiddleware, async (req, res) => {
     return res.status(500).json({ success: false, message: 'Error fetching stock report' });
   }
 });
+
 
 // GET /api/reports/supplier-orders
 // Filters: fromDate, toDate, productGroup, productId
