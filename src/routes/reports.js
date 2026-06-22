@@ -60,8 +60,19 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
       query += ' AND o.trans_dt <= @toDate';
     }
     if (partyId && partyId !== 'All') {
-      request.input('partyId', sql.VarChar, partyId);
-      query += ' AND o.client_code = @partyId';
+      // Support comma-separated list for multi-select (e.g. "C001,C002,C003")
+      const partyIds = String(partyId).split(',').map(id => id.trim()).filter(Boolean);
+      if (partyIds.length === 1) {
+        request.input('partyId', sql.VarChar, partyIds[0]);
+        query += ' AND o.client_code = @partyId';
+      } else if (partyIds.length > 1) {
+        // Safely build parameterised IN clause
+        const paramNames = partyIds.map((id, idx) => {
+          request.input(`partyId${idx}`, sql.VarChar, id);
+          return `@partyId${idx}`;
+        });
+        query += ` AND o.client_code IN (${paramNames.join(',')})`;
+      }
     }
     if (orderNo && orderNo !== 'All') {
       // Support comma-separated list for multi-select (e.g. "100001,100002,100003")
