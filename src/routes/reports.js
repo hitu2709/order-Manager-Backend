@@ -171,15 +171,15 @@ router.get('/stock', authMiddleware, async (req, res) => {
       // ── Summary mode: one row per product (StockReport_Summary) ───────────
       query = `
         SELECT
-          p.pr_code   AS ItemCode,
-          p.pr_name   AS ProductName,
+          p.prod_code   AS ItemCode,
+          p.prod_name   AS ProductName,
           SUM(ISNULL(ot.Qty, 0))                                                       AS OrderQty,
           SUM(ISNULL(ot.Rec_Qty, 0))                                                   AS DispatchQty,
           SUM(ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0))  AS BalQty
         FROM ord_tran ot
-        LEFT JOIN prdmast p ON ot.pr_code    = p.pr_code
-        LEFT JOIN s_order o ON ot.trans_no   = o.trans_no
-        LEFT JOIN Acmast  a ON o.client_code = a.ac_code
+        LEFT JOIN Product  p ON ot.pr_code    = p.prod_code
+        LEFT JOIN s_order  o ON ot.trans_no   = o.trans_no
+        LEFT JOIN Acmast   a ON o.client_code = a.ac_code
         WHERE 1=1
       `;
     } else {
@@ -190,15 +190,15 @@ router.get('/stock', authMiddleware, async (req, res) => {
           o.Vouchno   AS VouchNo,
           Convert(varchar(10), o.trans_dt, 103) AS OrderDate,
           a.ac_name   AS PartyName,
-          p.pr_code   AS ItemCode,
-          p.pr_name   AS ProductName,
+          p.prod_code AS ItemCode,
+          p.prod_name AS ProductName,
           ISNULL(ot.Qty, 0)                                                             AS OrderQty,
           ISNULL(ot.Rec_Qty, 0)                                                         AS DispatchQty,
           (ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0))       AS BalQty
         FROM ord_tran ot
-        LEFT JOIN prdmast p ON ot.pr_code    = p.pr_code
-        LEFT JOIN s_order o ON ot.trans_no   = o.trans_no
-        LEFT JOIN Acmast  a ON o.client_code = a.ac_code
+        LEFT JOIN Product  p ON ot.pr_code    = p.prod_code
+        LEFT JOIN s_order  o ON ot.trans_no   = o.trans_no
+        LEFT JOIN Acmast   a ON o.client_code = a.ac_code
         WHERE o.book_type = 'SO'
       `;
     }
@@ -235,9 +235,9 @@ router.get('/stock', authMiddleware, async (req, res) => {
 
     // ── ORDER BY ──────────────────────────────────────────────────────────────
     if (isSummary) {
-      query += ' GROUP BY p.pr_code, p.pr_name ORDER BY p.pr_name ASC';
+      query += ' GROUP BY p.prod_code, p.prod_name ORDER BY p.prod_name ASC';
     } else {
-      query += ' ORDER BY o.trans_dt DESC, o.Vouchno DESC, p.pr_name ASC';
+      query += ' ORDER BY o.trans_dt DESC, o.Vouchno DESC, p.prod_name ASC';
     }
 
     const result = await request.query(query);
