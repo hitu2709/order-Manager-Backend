@@ -156,26 +156,54 @@ router.get('/dispatch', authMiddleware, async (req, res) => {
 
 // GET /api/reports/stock
 // Filters: fromDate, toDate, partyId (comma-separated), productId (comma-separated), summary
+// summary=true  → StockReport_Summary equivalent (GROUP BY product)
+// summary=false → StockReport_Detail equivalent (row per order-item)
 router.get('/stock', authMiddleware, async (req, res) => {
   try {
     const { fromDate, toDate, partyId, productId, summary } = req.query;
+    const isSummary = summary === 'true' || summary === true;
     const pool = getPool();
     const request = pool.request();
 
-    let query = `
-      SELECT
-        p.pr_code       AS ItemCode,
-        p.pr_name       AS ProductName,
-        SUM(ISNULL(ot.Qty, 0))         AS OrderQty,
-        SUM(ISNULL(ot.Rec_Qty, 0))     AS DispatchQty,
-        SUM(ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0)) AS BalQty
-      FROM ord_tran ot
-      LEFT JOIN prdmast p ON ot.pr_code = p.pr_code
-      LEFT JOIN s_order o ON ot.trans_no = o.trans_no
-      LEFT JOIN Acmast a ON o.client_code = a.ac_code
-      WHERE 1=1
-    `;
+    let query;
 
+    if (isSummary) {
+      // ── Summary mode: one row per product (StockReport_Summary) ───────────
+      query = `
+        SELECT
+          p.pr_code   AS ItemCode,
+          p.pr_name   AS ProductName,
+          SUM(ISNULL(ot.Qty, 0))                                                       AS OrderQty,
+          SUM(ISNULL(ot.Rec_Qty, 0))                                                   AS DispatchQty,
+          SUM(ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0))  AS BalQty
+        FROM ord_tran ot
+        LEFT JOIN prdmast p ON ot.pr_code    = p.pr_code
+        LEFT JOIN s_order o ON ot.trans_no   = o.trans_no
+        LEFT JOIN Acmast  a ON o.client_code = a.ac_code
+        WHERE 1=1
+      `;
+    } else {
+      // ── Detail mode: one row per order-item (StockReport_Detail) ─────────
+      query = `
+        SELECT
+          o.trans_no  AS TransNo,
+          o.Vouchno   AS VouchNo,
+          Convert(varchar(10), o.trans_dt, 103) AS OrderDate,
+          a.ac_name   AS PartyName,
+          p.pr_code   AS ItemCode,
+          p.pr_name   AS ProductName,
+          ISNULL(ot.Qty, 0)                                                             AS OrderQty,
+          ISNULL(ot.Rec_Qty, 0)                                                         AS DispatchQty,
+          (ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0))       AS BalQty
+        FROM ord_tran ot
+        LEFT JOIN prdmast p ON ot.pr_code    = p.pr_code
+        LEFT JOIN s_order o ON ot.trans_no   = o.trans_no
+        LEFT JOIN Acmast  a ON o.client_code = a.ac_code
+        WHERE o.book_type = 'SO'
+      `;
+    }
+
+    // ── Common filters ────────────────────────────────────────────────────────
     if (fromDate) {
       request.input('fromDate', sql.DateTime, new Date(fromDate));
       query += ' AND o.trans_dt >= @fromDate';
@@ -189,12 +217,9 @@ router.get('/stock', authMiddleware, async (req, res) => {
       if (partyIds.length === 1) {
         request.input('partyId', sql.VarChar, partyIds[0]);
         query += ' AND o.client_code = @partyId';
-      } else if (partyIds.length > 1) {
-        const paramNames = partyIds.map((id, idx) => {
-          request.input(`partyId${idx}`, sql.VarChar, id);
-          return `@partyId${idx}`;
-        });
-        query += ` AND o.client_code IN (${paramNames.join(',')})`;
+      } else {
+        const params = partyIds.map((id, idx) => { request.input(`partyId${idx}`, sql.VarChar, id); return `@partyId${idx}`; });
+        query += ` AND o.client_code IN (${params.join(',')})`;
       }
     }
     if (productId && productId !== 'All') {
@@ -202,16 +227,18 @@ router.get('/stock', authMiddleware, async (req, res) => {
       if (productIds.length === 1) {
         request.input('productId', sql.VarChar, productIds[0]);
         query += ' AND ot.pr_code = @productId';
-      } else if (productIds.length > 1) {
-        const paramNames = productIds.map((id, idx) => {
-          request.input(`productId${idx}`, sql.VarChar, id);
-          return `@productId${idx}`;
-        });
-        query += ` AND ot.pr_code IN (${paramNames.join(',')})`;
+      } else {
+        const params = productIds.map((id, idx) => { request.input(`productId${idx}`, sql.VarChar, id); return `@productId${idx}`; });
+        query += ` AND ot.pr_code IN (${params.join(',')})`;
       }
     }
 
-    query += ' GROUP BY p.pr_code, p.pr_name ORDER BY p.pr_name ASC';
+    // ── ORDER BY ──────────────────────────────────────────────────────────────
+    if (isSummary) {
+      query += ' GROUP BY p.pr_code, p.pr_name ORDER BY p.pr_name ASC';
+    } else {
+      query += ' ORDER BY o.trans_dt DESC, o.Vouchno DESC, p.pr_name ASC';
+    }
 
     const result = await request.query(query);
     return res.status(200).json({ success: true, data: result.recordset });
