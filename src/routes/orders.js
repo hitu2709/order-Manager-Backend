@@ -136,11 +136,16 @@ router.post('/create', authMiddleware, async (req, res) => {
 
 // GET /api/parties
 // Get all parties for dropdown using Acmast
+// Optional grpName param overrides the default DEBTORS filter (e.g. grpName=CREDITORS for stock report)
 router.get('/parties', authMiddleware, async (req, res) => {
   try {
-    const { orderNo, productId } = req.query;
+    const { orderNo, productId, grpName } = req.query;
     const pool = getPool();
     const request = pool.request();
+
+    // Use provided grpName or fall back to DEBTORS (keeps all other screens unchanged)
+    const groupFilter = grpName ? `%${grpName.toUpperCase()}%` : '%DEBTORS%';
+    request.input('grpFilter', sql.VarChar, groupFilter);
 
     let query = `
       SELECT 
@@ -150,7 +155,7 @@ router.get('/parties', authMiddleware, async (req, res) => {
         A.discper,
         (SELECT TOP 1 LTRIM(RTRIM(ISNULL(transport, ''))) FROM Ac_Excise WHERE LTRIM(RTRIM(ac_Code)) = LTRIM(RTRIM(A.ac_code))) as Transport
       FROM Acmast A
-      WHERE A.grp_name Like '%DEBTORS%'
+      WHERE A.grp_name LIKE @grpFilter
     `;
 
     if (orderNo && orderNo !== 'All') {
@@ -170,6 +175,7 @@ router.get('/parties', authMiddleware, async (req, res) => {
     return res.status(500).json({ success: false, message: 'Error fetching parties' });
   }
 });
+
 
 // GET /api/salesmen
 // Get all salesmen for dropdown using acMast
