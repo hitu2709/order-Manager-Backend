@@ -173,9 +173,10 @@ router.get('/stock', authMiddleware, async (req, res) => {
         SELECT
           p.prod_code   AS ItemCode,
           p.prod_name   AS ProductName,
-          SUM(ISNULL(ot.Qty, 0))                                                       AS OrderQty,
-          SUM(ISNULL(ot.Rec_Qty, 0))                                                   AS DispatchQty,
-          SUM(ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0))  AS BalQty
+          0                                                                            AS Opening,
+          SUM(ISNULL(ot.Qty, 0))                                                       AS Inward,
+          SUM(ISNULL(ot.Rec_Qty, 0))                                                   AS Outward,
+          SUM(ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0))  AS Balance
         FROM ord_tran ot
         LEFT JOIN Product  p ON ot.pr_code    = p.prod_code
         LEFT JOIN s_order  o ON ot.trans_no   = o.trans_no
@@ -192,9 +193,10 @@ router.get('/stock', authMiddleware, async (req, res) => {
           a.ac_name   AS PartyName,
           p.prod_code AS ItemCode,
           p.prod_name AS ProductName,
-          ISNULL(ot.Qty, 0)                                                             AS OrderQty,
-          ISNULL(ot.Rec_Qty, 0)                                                         AS DispatchQty,
-          (ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0))       AS BalQty
+          0                                                                             AS Opening,
+          ISNULL(ot.Qty, 0)                                                             AS Inward,
+          ISNULL(ot.Rec_Qty, 0)                                                         AS Outward,
+          (ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0))       AS Balance
         FROM ord_tran ot
         LEFT JOIN Product  p ON ot.pr_code    = p.prod_code
         LEFT JOIN s_order  o ON ot.trans_no   = o.trans_no
@@ -237,7 +239,8 @@ router.get('/stock', authMiddleware, async (req, res) => {
     if (isSummary) {
       query += ' GROUP BY p.prod_code, p.prod_name ORDER BY p.prod_name ASC';
     } else {
-      query += ' ORDER BY o.trans_dt DESC, o.Vouchno DESC, p.prod_name ASC';
+      // Sort by product name first so front-end can group rows by product
+      query += ' ORDER BY p.prod_name ASC, o.trans_dt DESC, o.Vouchno DESC';
     }
 
     const result = await request.query(query);
