@@ -171,6 +171,7 @@ router.get('/stock', authMiddleware, async (req, res) => {
       // ── Summary mode: one row per product (StockReport_Summary) ───────────
       query = `
         SELECT
+          a.ac_name     AS PartyName,
           p.prod_code   AS ItemCode,
           p.prod_name   AS ProductName,
           0                                                                            AS Opening,
@@ -237,7 +238,7 @@ router.get('/stock', authMiddleware, async (req, res) => {
 
     // ── ORDER BY ──────────────────────────────────────────────────────────────
     if (isSummary) {
-      query += ' GROUP BY p.prod_code, p.prod_name ORDER BY p.prod_name ASC';
+      query += ' GROUP BY a.ac_name, p.prod_code, p.prod_name ORDER BY a.ac_name ASC, p.prod_name ASC';
     } else {
       // Sort by product name first so front-end can group rows by product
       query += ' ORDER BY p.prod_name ASC, o.trans_dt DESC, o.Vouchno DESC';
