@@ -182,7 +182,7 @@ router.get('/stock', authMiddleware, async (req, res) => {
         LEFT JOIN Product  p ON ot.pr_code    = p.prod_code
         LEFT JOIN s_order  o ON ot.trans_no   = o.trans_no
         LEFT JOIN Acmast   a ON o.client_code = a.ac_code
-        WHERE 1=1
+        WHERE a.grp_name LIKE '%CREDITOR%'
       `;
     } else {
       // ── Detail mode: one row per order-item (StockReport_Detail) ─────────
@@ -203,6 +203,7 @@ router.get('/stock', authMiddleware, async (req, res) => {
         LEFT JOIN s_order  o ON ot.trans_no   = o.trans_no
         LEFT JOIN Acmast   a ON o.client_code = a.ac_code
         WHERE o.book_type = 'SO'
+          AND a.grp_name LIKE '%CREDITOR%'
       `;
     }
 
