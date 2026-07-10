@@ -261,25 +261,25 @@ router.get('/stock', authMiddleware, async (req, res) => {
 
         Opening:
           parseFloat(find(
-            'Opening','Opn_Qty','op_qty','OpnQty','OpnBal','OBal',
+            'OpeningQty','Opening','Opn_Qty','op_qty','OpnQty','OpnBal','OBal',
             'Opening_Qty','OpQty','OpenQty','Opn'
           ) ?? 0) || 0,
 
         Inward:
           parseFloat(find(
-            'Inward','In_Qty','in_qty','InQty','InWard','Inw_Qty',
+            'InwardQty','Inward','In_Qty','in_qty','InQty','InWard','Inw_Qty',
             'RecQty','Rec_Qty','Purchase','InwardQty'
           ) ?? 0) || 0,
 
         Outward:
           parseFloat(find(
-            'Outward','Out_Qty','out_qty','OutQty','OutWard',
+            'OutwardQty','Outward','Out_Qty','out_qty','OutQty','OutWard',
             'DelQty','Sale','Dispatch','OutwardQty'
           ) ?? 0) || 0,
 
         Balance:
           parseFloat(find(
-            'Balance','Bal_Qty','bal_qty','Cls_Qty','BalQty',
+            'BalanceQty','Balance','Bal_Qty','bal_qty','Cls_Qty','BalQty',
             'ClosBal','CBal','Closing_Qty','ClsQty','Closing'
           ) ?? 0) || 0,
 
