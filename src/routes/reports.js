@@ -156,8 +156,8 @@ router.get('/dispatch', authMiddleware, async (req, res) => {
 
 // GET /api/reports/stock
 // Calls the SAME stored procedures as the web app:
-//   summary=true  → StockReport_Summary
-//   summary=false → StockReport_Detail
+//   summary=true  -> StockReport_Summary
+//   summary=false -> StockReport_Detail
 // Params: fromDate, toDate, partyId (comma-separated ac_code), productId (comma-separated prod_code)
 router.get('/stock', authMiddleware, async (req, res) => {
   try {
@@ -177,7 +177,7 @@ router.get('/stock', authMiddleware, async (req, res) => {
       : [];
 
     // ── Guard: require at least one filter ────────────────────────────────────
-    // Calling stored proc with ALL parties × ALL products is too large.
+    // Calling stored proc with ALL parties x ALL products is too large.
     if (partyIds.length === 0 && productIds.length === 0) {
       return res.status(400).json({
         success: false,
@@ -191,37 +191,103 @@ router.get('/stock', authMiddleware, async (req, res) => {
     const pList    = partyIds.length   > 0 ? partyIds   : [''];
     const prodList = productIds.length > 0 ? productIds : [''];
 
-    // ── Call stored proc for every party × product combination ────────────────
+    // ── Call stored proc for every party x product combination ─────────────────
     const allRows = [];
     for (const pId of pList) {
+      // Look up the party display name from Acmast so we can inject it into every
+      // row — the SP filtered by @Acc_Code often does not echo the party name back.
+      let resolvedPartyName = '';
+      if (pId) {
+        try {
+          const pReq = pool.request();
+          pReq.input('_acCode', sql.VarChar, pId);
+          const pRes = await pReq.query('SELECT ac_name FROM Acmast WHERE ac_code = @_acCode');
+          if (pRes.recordset.length > 0) resolvedPartyName = pRes.recordset[0].ac_name || '';
+        } catch (_) { /* non-fatal */ }
+      }
+
       for (const prodId of prodList) {
         const request = pool.request();
-        request.requestTimeout = 25000;          // 25 s per call
+        request.requestTimeout = 25000; // 25 s per call
         request.input('Acc_Code',  sql.VarChar,  pId    || '');
         request.input('Prod_code', sql.VarChar,  prodId || '');
         request.input('Frm_Date',  sql.DateTime, frm);
         request.input('Till_Date', sql.DateTime, till);
         const result = await request.execute(procName);
         if (result.recordset && result.recordset.length > 0) {
+          // Attach the resolved party name so the normaliser can always find it
+          result.recordset.forEach(row => { row._resolvedPartyName = resolvedPartyName; });
           allRows.push(...result.recordset);
         }
       }
     }
 
-    // ── Normalise column names → what the frontend expects ───────────────────
-    // The stored procs may use different column names; try every known alias.
-    const normalize = (row) => ({
-      PartyName:   row.PartyName   ?? row.ac_name    ?? row.Party_Name   ?? row.partyname   ?? '',
-      ItemCode:    row.ItemCode    ?? row.pr_code     ?? row.prod_code    ?? row.Item_Code   ?? row.itemcode    ?? '',
-      ProductName: row.ProductName ?? row.pr_name     ?? row.prod_name    ?? row.Prod_Name   ?? row.productname ?? '',
-      Opening:  parseFloat(row.Opening  ?? row.Opn_Qty  ?? row.op_qty   ?? row.OpnQty   ?? 0) || 0,
-      Inward:   parseFloat(row.Inward   ?? row.In_Qty   ?? row.in_qty   ?? row.InQty    ?? 0) || 0,
-      Outward:  parseFloat(row.Outward  ?? row.Out_Qty  ?? row.out_qty  ?? row.OutQty   ?? 0) || 0,
-      Balance:  parseFloat(row.Balance  ?? row.Bal_Qty  ?? row.bal_qty  ?? row.Cls_Qty  ?? row.BalQty ?? 0) || 0,
-      // Detail-mode extras
-      VouchNo:   row.VouchNo   ?? row.Vouchno   ?? row.vouch_no  ?? '',
-      OrderDate: row.OrderDate ?? row.Trans_dt  ?? row.trans_dt  ?? '',
-    });
+    // Log actual SP column names to Render logs so we can see the true naming
+    if (allRows.length > 0) {
+      console.log('[StockReport] SP columns:', Object.keys(allRows[0]));
+      console.log('[StockReport] SP sample row:', JSON.stringify(allRows[0]));
+    } else {
+      console.log('[StockReport] SP returned 0 rows');
+    }
+
+    // ── Fuzzy normaliser: case-insensitive column matching ────────────────────
+    const normalize = (row) => {
+      const keys = Object.keys(row);
+
+      // Try exact match (case-insensitive) first, then substring match
+      const find = (...patterns) => {
+        for (const pat of patterns) {
+          const k = keys.find(k => k.toLowerCase() === pat.toLowerCase());
+          if (k !== undefined && row[k] !== null && row[k] !== undefined) return row[k];
+        }
+        for (const pat of patterns) {
+          const k = keys.find(k => k.toLowerCase().includes(pat.toLowerCase()));
+          if (k !== undefined && row[k] !== null && row[k] !== undefined) return row[k];
+        }
+        return undefined;
+      };
+
+      return {
+        // Party name: prefer the Acmast lookup, fall back to any SP column
+        PartyName:
+          row._resolvedPartyName ||
+          find('PartyName','ac_name','Party_Name','partyname','AccName','CustName','ClientName') || '',
+
+        ItemCode:
+          find('ItemCode','pr_code','prod_code','Item_Code','itemcode','ProdCode','ProductCode','code') || '',
+
+        ProductName:
+          find('ProductName','pr_name','prod_name','Prod_Name','productname','ProdName','Item_Name','ItemName') || '',
+
+        Opening:
+          parseFloat(find(
+            'Opening','Opn_Qty','op_qty','OpnQty','OpnBal','OBal',
+            'Opening_Qty','OpQty','OpenQty','Opn'
+          ) ?? 0) || 0,
+
+        Inward:
+          parseFloat(find(
+            'Inward','In_Qty','in_qty','InQty','InWard','Inw_Qty',
+            'RecQty','Rec_Qty','Purchase','InwardQty'
+          ) ?? 0) || 0,
+
+        Outward:
+          parseFloat(find(
+            'Outward','Out_Qty','out_qty','OutQty','OutWard',
+            'DelQty','Sale','Dispatch','OutwardQty'
+          ) ?? 0) || 0,
+
+        Balance:
+          parseFloat(find(
+            'Balance','Bal_Qty','bal_qty','Cls_Qty','BalQty',
+            'ClosBal','CBal','Closing_Qty','ClsQty','Closing'
+          ) ?? 0) || 0,
+
+        // Detail-mode extras
+        VouchNo:   find('VouchNo','Vouchno','vouch_no','VoNo','DocNo') || '',
+        OrderDate: find('OrderDate','Trans_dt','trans_dt','Date','TrnDate','DocDate') || '',
+      };
+    };
 
     const data = allRows.map(normalize);
     return res.status(200).json({ success: true, data });
