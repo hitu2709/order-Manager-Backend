@@ -287,6 +287,25 @@ router.get('/supplier-orders', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/reports/dispatch-parties
+// Returns distinct parties who have dispatch records (Rec_Order DC)
+router.get('/dispatch-parties', authMiddleware, async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.request().query(`
+      SELECT DISTINCT a.ac_code AS PartyID, a.ac_name AS PartyName
+      FROM Rec_Order d
+      JOIN Acmast a ON d.client_code = a.ac_code
+      WHERE d.book_type = 'DC'
+      ORDER BY a.ac_name
+    `);
+    return res.status(200).json({ success: true, data: result.recordset });
+  } catch (err) {
+    console.error('Dispatch parties error:', err);
+    return res.status(500).json({ success: false, message: 'Error fetching dispatch parties' });
+  }
+});
+
 // GET /api/reports/dispatch-numbers
 router.get('/dispatch-numbers', authMiddleware, async (req, res) => {
   try {
@@ -295,11 +314,12 @@ router.get('/dispatch-numbers', authMiddleware, async (req, res) => {
     const request = pool.request();
 
     let query = `SELECT TOP 200 d.Trans_No, d.Vouchno FROM Rec_Order d WHERE d.book_type = 'DC'`;
-    if (partyId   && partyId   !== 'All') { request.input('partyId',   sql.VarChar, partyId);              query += ' AND d.client_code = @partyId'; }
-    if (productId && productId !== 'All') { request.input('productId', sql.VarChar, productId);             query += ' AND EXISTS (SELECT 1 FROM Rec_Tran rt WHERE rt.Trans_No = d.Trans_No AND rt.pr_code = @productId)'; }
+    if (partyId   && partyId   !== 'All') { request.input('partyId',   sql.VarChar, partyId);   query += ' AND d.client_code = @partyId'; }
+    if (productId && productId !== 'All') { request.input('productId', sql.VarChar, productId); query += ' AND EXISTS (SELECT 1 FROM Rec_Tran rt WHERE rt.Trans_No = d.Trans_No AND rt.pr_code = @productId)'; }
     query += ' ORDER BY d.Trans_No DESC';
 
     const result = await request.query(query);
+    // Return both Trans_No (for API filtering) and Vouchno (for display)
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Dispatch numbers error:', err);
@@ -318,11 +338,21 @@ router.get('/dispatch-products', authMiddleware, async (req, res) => {
     if (partyId    && partyId    !== 'All') { request.input('partyId',    sql.VarChar, partyId);          subQuery += ' AND d.client_code = @partyId'; }
     if (dispatchNo && dispatchNo !== 'All') { request.input('dispatchNo', sql.Int, parseInt(dispatchNo)); subQuery += ' AND rt.Trans_No = @dispatchNo'; }
 
-    const result = await request.query(`
-      SELECT prod_code as ItemCode, prod_name as ProductName, 0 as Stock, unit1 as Unit
-      FROM Product WHERE prod_code IN (${subQuery})
-      ORDER BY prod_code
-    `);
+    // Try Product table first, fall back to prdmast
+    let result;
+    try {
+      result = await request.query(`
+        SELECT prod_code AS ItemCode, prod_name AS ProductName, unit1 AS Unit
+        FROM Product WHERE prod_code IN (${subQuery})
+        ORDER BY prod_code
+      `);
+    } catch (_) {
+      result = await request.query(`
+        SELECT pr_code AS ItemCode, pr_name AS ProductName, unit AS Unit
+        FROM prdmast WHERE pr_code IN (${subQuery})
+        ORDER BY pr_code
+      `);
+    }
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Dispatch products error:', err);
@@ -331,3 +361,4 @@ router.get('/dispatch-products', authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+
