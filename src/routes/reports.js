@@ -155,101 +155,68 @@ router.get('/dispatch', authMiddleware, async (req, res) => {
 });
 
 // GET /api/reports/stock
-// Filters: fromDate, toDate, partyId (comma-separated), productId (comma-separated), summary
-// summary=true  → StockReport_Summary equivalent (GROUP BY product)
-// summary=false → StockReport_Detail equivalent (row per order-item)
+// Calls the SAME stored procedures as the web app:
+//   summary=true  → StockReport_Summary
+//   summary=false → StockReport_Detail
+// Params: fromDate, toDate, partyId (comma-separated ac_code), productId (comma-separated prod_code)
 router.get('/stock', authMiddleware, async (req, res) => {
   try {
     const { fromDate, toDate, partyId, productId, summary } = req.query;
     const isSummary = summary === 'true' || summary === true;
     const pool = getPool();
-    const request = pool.request();
 
-    let query;
+    const frm  = fromDate ? new Date(fromDate) : new Date();
+    const till = toDate   ? new Date(toDate)   : new Date();
 
-    if (isSummary) {
-      // ── Summary mode: one row per product (StockReport_Summary) ───────────
-      query = `
-        SELECT
-          a.ac_name     AS PartyName,
-          p.prod_code   AS ItemCode,
-          p.prod_name   AS ProductName,
-          0                                                                            AS Opening,
-          SUM(ISNULL(ot.Qty, 0))                                                       AS Inward,
-          SUM(ISNULL(ot.Rec_Qty, 0))                                                   AS Outward,
-          SUM(ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0))  AS Balance
-        FROM ord_tran ot
-        LEFT JOIN Product  p ON ot.pr_code    = p.prod_code
-        LEFT JOIN s_order  o ON ot.trans_no   = o.trans_no
-        LEFT JOIN Acmast   a ON o.client_code = a.ac_code
-        WHERE a.grp_name LIKE '%CREDITOR%'
-      `;
-    } else {
-      // ── Detail mode: one row per order-item (StockReport_Detail) ─────────
-      query = `
-        SELECT
-          o.trans_no  AS TransNo,
-          o.Vouchno   AS VouchNo,
-          Convert(varchar(10), o.trans_dt, 103) AS OrderDate,
-          a.ac_name   AS PartyName,
-          p.prod_code AS ItemCode,
-          p.prod_name AS ProductName,
-          0                                                                             AS Opening,
-          ISNULL(ot.Qty, 0)                                                             AS Inward,
-          ISNULL(ot.Rec_Qty, 0)                                                         AS Outward,
-          (ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0))       AS Balance
-        FROM ord_tran ot
-        LEFT JOIN Product  p ON ot.pr_code    = p.prod_code
-        LEFT JOIN s_order  o ON ot.trans_no   = o.trans_no
-        LEFT JOIN Acmast   a ON o.client_code = a.ac_code
-        WHERE o.book_type = 'SO'
-          AND a.grp_name LIKE '%CREDITOR%'
-      `;
-    }
+    // Split multi-select; empty string tells the stored proc to return ALL
+    const partyIds   = (partyId   && partyId   !== 'All')
+      ? String(partyId).split(',').map(s => s.trim()).filter(Boolean)
+      : [''];
+    const productIds = (productId && productId !== 'All')
+      ? String(productId).split(',').map(s => s.trim()).filter(Boolean)
+      : [''];
 
-    // ── Common filters ────────────────────────────────────────────────────────
-    if (fromDate) {
-      request.input('fromDate', sql.DateTime, new Date(fromDate));
-      query += ' AND o.trans_dt >= @fromDate';
-    }
-    if (toDate) {
-      request.input('toDate', sql.DateTime, new Date(toDate));
-      query += ' AND o.trans_dt <= @toDate';
-    }
-    if (partyId && partyId !== 'All') {
-      const partyIds = String(partyId).split(',').map(id => id.trim()).filter(Boolean);
-      if (partyIds.length === 1) {
-        request.input('partyId', sql.VarChar, partyIds[0]);
-        query += ' AND o.client_code = @partyId';
-      } else {
-        const params = partyIds.map((id, idx) => { request.input(`partyId${idx}`, sql.VarChar, id); return `@partyId${idx}`; });
-        query += ` AND o.client_code IN (${params.join(',')})`;
-      }
-    }
-    if (productId && productId !== 'All') {
-      const productIds = String(productId).split(',').map(id => id.trim()).filter(Boolean);
-      if (productIds.length === 1) {
-        request.input('productId', sql.VarChar, productIds[0]);
-        query += ' AND ot.pr_code = @productId';
-      } else {
-        const params = productIds.map((id, idx) => { request.input(`productId${idx}`, sql.VarChar, id); return `@productId${idx}`; });
-        query += ` AND ot.pr_code IN (${params.join(',')})`;
+    const procName = isSummary ? 'StockReport_Summary' : 'StockReport_Detail';
+
+    // ── Call stored proc for every party × product combination ────────────────
+    const allRows = [];
+    for (const pId of partyIds) {
+      for (const prodId of productIds) {
+        const request = pool.request();
+        request.input('Acc_Code',  sql.VarChar,  pId    || '');
+        request.input('Prod_code', sql.VarChar,  prodId || '');
+        request.input('Frm_Date',  sql.DateTime, frm);
+        request.input('Till_Date', sql.DateTime, till);
+        const result = await request.execute(procName);
+        if (result.recordset && result.recordset.length > 0) {
+          allRows.push(...result.recordset);
+        }
       }
     }
 
-    // ── ORDER BY ──────────────────────────────────────────────────────────────
-    if (isSummary) {
-      query += ' GROUP BY a.ac_name, p.prod_code, p.prod_name ORDER BY a.ac_name ASC, p.prod_name ASC';
-    } else {
-      // Sort by product name first so front-end can group rows by product
-      query += ' ORDER BY p.prod_name ASC, o.trans_dt DESC, o.Vouchno DESC';
-    }
+    // ── Normalise column names → what the frontend expects ───────────────────
+    // The stored procs may use different column names; try every known alias.
+    const normalize = (row) => ({
+      PartyName:   row.PartyName   ?? row.ac_name    ?? row.Party_Name   ?? row.partyname   ?? '',
+      ItemCode:    row.ItemCode    ?? row.pr_code     ?? row.prod_code    ?? row.Item_Code   ?? row.itemcode    ?? '',
+      ProductName: row.ProductName ?? row.pr_name     ?? row.prod_name    ?? row.Prod_Name   ?? row.productname ?? '',
+      Opening:  parseFloat(row.Opening  ?? row.Opn_Qty  ?? row.op_qty   ?? row.OpnQty   ?? 0) || 0,
+      Inward:   parseFloat(row.Inward   ?? row.In_Qty   ?? row.in_qty   ?? row.InQty    ?? 0) || 0,
+      Outward:  parseFloat(row.Outward  ?? row.Out_Qty  ?? row.out_qty  ?? row.OutQty   ?? 0) || 0,
+      Balance:  parseFloat(row.Balance  ?? row.Bal_Qty  ?? row.bal_qty  ?? row.Cls_Qty  ?? row.BalQty ?? 0) || 0,
+      // Detail-mode extras
+      VouchNo:   row.VouchNo   ?? row.Vouchno   ?? row.vouch_no  ?? '',
+      OrderDate: row.OrderDate ?? row.Trans_dt  ?? row.trans_dt  ?? '',
+    });
 
-    const result = await request.query(query);
-    return res.status(200).json({ success: true, data: result.recordset });
+    const data = allRows.map(normalize);
+    return res.status(200).json({ success: true, data });
   } catch (err) {
     console.error('Stock report error:', err);
-    return res.status(500).json({ success: false, message: 'Error fetching stock report' });
+    return res.status(500).json({
+      success: false,
+      message: 'Stock report error: ' + (err.message || err),
+    });
   }
 });
 
