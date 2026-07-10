@@ -168,21 +168,35 @@ router.get('/stock', authMiddleware, async (req, res) => {
     const frm  = fromDate ? new Date(fromDate) : new Date();
     const till = toDate   ? new Date(toDate)   : new Date();
 
-    // Split multi-select; empty string tells the stored proc to return ALL
+    // Split multi-select; empty array = "All" for that dimension
     const partyIds   = (partyId   && partyId   !== 'All')
       ? String(partyId).split(',').map(s => s.trim()).filter(Boolean)
-      : [''];
+      : [];
     const productIds = (productId && productId !== 'All')
       ? String(productId).split(',').map(s => s.trim()).filter(Boolean)
-      : [''];
+      : [];
+
+    // ── Guard: require at least one filter ────────────────────────────────────
+    // Calling stored proc with ALL parties × ALL products is too large.
+    if (partyIds.length === 0 && productIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please select at least one Party or one Product before generating the Stock Report.',
+      });
+    }
 
     const procName = isSummary ? 'StockReport_Summary' : 'StockReport_Detail';
 
+    // If one dimension is 'All', pass [''] so the proc returns all for it
+    const pList    = partyIds.length   > 0 ? partyIds   : [''];
+    const prodList = productIds.length > 0 ? productIds : [''];
+
     // ── Call stored proc for every party × product combination ────────────────
     const allRows = [];
-    for (const pId of partyIds) {
-      for (const prodId of productIds) {
+    for (const pId of pList) {
+      for (const prodId of prodList) {
         const request = pool.request();
+        request.requestTimeout = 25000;          // 25 s per call
         request.input('Acc_Code',  sql.VarChar,  pId    || '');
         request.input('Prod_code', sql.VarChar,  prodId || '');
         request.input('Frm_Date',  sql.DateTime, frm);
