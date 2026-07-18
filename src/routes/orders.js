@@ -72,6 +72,12 @@ router.post('/create', authMiddleware, async (req, res) => {
     const trunc = (str, len) => String(str || '').substring(0, len);
 
     // 2. Insert the order header into s_order
+    // flag "1"/"2"/"3" → chkOne/chkTwo/chkThree (selected=1, others=0)
+    // adjustment "R"/"M"  → chek_amt
+    const flagVal  = String(flag || '1');
+    const chkOne   = flagVal === '1' ? 1 : 0;
+    const chkTwo   = flagVal === '2' ? 1 : 0;
+    const chkThree = flagVal === '3' ? 1 : 0;
     await request
       .input('transNo', sql.Int, nextTransNo)
       .input('transDt', sql.DateTime, orderDate ? new Date(orderDate) : new Date())
@@ -79,14 +85,18 @@ router.post('/create', authMiddleware, async (req, res) => {
       .input('amount', sql.Float, calcTotal)
       .input('transport', sql.NVarChar(100), trunc(transport, 100))
       .input('inspection', sql.NVarChar(500), trunc(notes || '', 500))
-      .input('username', sql.VarChar(100), trunc(String((req.user && (req.user.userId || req.user.username)) || 'admin'), 100))
+      .input('username', sql.VarChar(100), trunc(String((req.user && req.user.userName) || 'admin'), 100))
       .input('brokerCode', sql.NVarChar(7), trunc(salesmanId || '', 7))
       .input('bookType', sql.NVarChar(2), 'SO')
       .input('vouchNo', sql.NVarChar(10), trunc(String(nextVouchNo), 10))
       .input('addStock', sql.NVarChar(1), '')
+      .input('chekAmt', sql.NVarChar(5), trunc(String(adjustment || ''), 5))  // R or M
+      .input('chkOne',   sql.Int, chkOne)
+      .input('chkTwo',   sql.Int, chkTwo)
+      .input('chkThree', sql.Int, chkThree)
       .query(`
-        INSERT INTO s_order (trans_no, trans_dt, client_code, amount, transport, Inspection, username, Broker_code, book_type, VouchNo, AddStock)
-        VALUES (@transNo, @transDt, @clientCode, @amount, @transport, @inspection, @username, @brokerCode, @bookType, @vouchNo, @addStock)
+        INSERT INTO s_order (trans_no, trans_dt, client_code, amount, transport, Inspection, username, Broker_code, book_type, VouchNo, AddStock, chek_amt, chkOne, chkTwo, chkThree)
+        VALUES (@transNo, @transDt, @clientCode, @amount, @transport, @inspection, @username, @brokerCode, @bookType, @vouchNo, @addStock, @chekAmt, @chkOne, @chkTwo, @chkThree)
       `);
 
     // 3. Insert each product into ord_tran
@@ -427,7 +437,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
 // Update an existing order
 router.put('/:id', authMiddleware, async (req, res) => {
   const { 
-    products, transport, notes, salesmanId, totalAmount, partyId
+    products, transport, notes, salesmanId, totalAmount, partyId, flag, adjustment
   } = req.body;
   const id = parseInt(req.params.id, 10);
   const pool = getPool();
@@ -441,6 +451,12 @@ router.put('/:id', authMiddleware, async (req, res) => {
     const trunc = (str, len) => String(str || '').substring(0, len);
 
     // 1. Update s_order (Header)
+    // flag "1"/"2"/"3" → chkOne/chkTwo/chkThree (selected=1, others=0)
+    // adjustment "R"/"M"  → chek_amt
+    const flagVal  = String(flag || '1');
+    const chkOne   = flagVal === '1' ? 1 : 0;
+    const chkTwo   = flagVal === '2' ? 1 : 0;
+    const chkThree = flagVal === '3' ? 1 : 0;
     await request
       .input('id', sql.Int, id)
       .input('amount', sql.Float, parseFloat(totalAmount) || 0)
@@ -448,9 +464,16 @@ router.put('/:id', authMiddleware, async (req, res) => {
       .input('spNote', sql.NText, notes || '')
       .input('brokerCode', sql.NVarChar(7), trunc(salesmanId || '', 7))
       .input('partyId', sql.NVarChar(7), trunc(partyId || '', 7))
+      .input('username', sql.VarChar(100), trunc(String((req.user && req.user.userName) || 'admin'), 100))
+      .input('chekAmt', sql.NVarChar(5), trunc(String(adjustment || ''), 5))
+      .input('chkOne',   sql.Int, chkOne)
+      .input('chkTwo',   sql.Int, chkTwo)
+      .input('chkThree', sql.Int, chkThree)
       .query(`
         UPDATE s_order 
-        SET amount = @amount, transport = @transport, Sp_Note = @spNote, Broker_code = @brokerCode, client_code = @partyId
+        SET amount = @amount, transport = @transport, Sp_Note = @spNote, Broker_code = @brokerCode,
+            client_code = @partyId, username = @username,
+            chek_amt = @chekAmt, chkOne = @chkOne, chkTwo = @chkTwo, chkThree = @chkThree
         WHERE trans_no = @id
       `);
 
