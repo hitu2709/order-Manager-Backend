@@ -217,7 +217,7 @@ router.get('/products', authMiddleware, async (req, res) => {
         subQuery += ' AND ot.trans_no = @orderNo';
       }
       const result = await request.query(`
-        SELECT prod_code as ItemCode, prod_name as ProductName, 0 as Stock, unit1 as Unit, Image as ImageUrl, sale_rate as Rate
+        SELECT prod_code as ItemCode, prod_name as ProductName, 0 as Stock, base_unit as Unit, Image as ImageUrl, sale_rate as Rate
         FROM Product
         WHERE prod_code IN (${subQuery})
         ORDER BY prod_code
@@ -227,7 +227,7 @@ router.get('/products', authMiddleware, async (req, res) => {
 
     // No filters — return all
     const result = await request.query(`
-      SELECT prod_code as ItemCode, prod_name as ProductName, 0 as Stock, unit1 as Unit, Image as ImageUrl, sale_rate as Rate 
+      SELECT prod_code as ItemCode, prod_name as ProductName, 0 as Stock, base_unit as Unit, Image as ImageUrl, sale_rate as Rate 
       FROM Product ORDER BY prod_code
     `);
     return res.status(200).json({ success: true, data: result.recordset });
