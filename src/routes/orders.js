@@ -90,6 +90,7 @@ router.post('/create', authMiddleware, async (req, res) => {
       `);
 
     // 3. Insert each product into ord_tran
+    const loggedInUserName = trunc(String((req.user && req.user.userName) || 'admin'), 100);
     for (let i = 0; i < products.length; i++) {
       const p = products[i];
       const prodRequest = new sql.Request(transaction);
@@ -109,9 +110,12 @@ router.post('/create', authMiddleware, async (req, res) => {
         .input('itemHead', sql.NVarChar(50), trunc(p.productName || '', 50))
         .input('description', sql.NVarChar(200), trunc(p.remark || '', 200))
         .input('stkQty', sql.Float, parseFloat(p.stkQty || 0))
+        .input('unit', sql.NVarChar(20), trunc(p.unit || '', 20))             // item unit (e.g. PCS)
+        .input('code', sql.NVarChar(7), trunc(partyId || '', 7))              // party code
+        .input('userName', sql.NVarChar(100), loggedInUserName)               // logged-in user name
         .query(`
-          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description, StkQty)
-          VALUES (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead, @description, @stkQty)
+          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description, StkQty, unit, code, username)
+          VALUES (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead, @description, @stkQty, @unit, @code, @userName)
         `);
     }
 
@@ -456,6 +460,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
     // 3. Re-insert items in batches of 50 to handle large orders (500+ items) without timeout
     if (products && products.length > 0) {
       const BATCH_SIZE = 50;
+      const loggedInUserName = trunc(String((req.user && req.user.userName) || 'admin'), 100);
       for (let batchStart = 0; batchStart < products.length; batchStart += BATCH_SIZE) {
         const batch = products.slice(batchStart, Math.min(batchStart + BATCH_SIZE, products.length));
         const batchRequest = new sql.Request(transaction);
@@ -479,11 +484,14 @@ router.put('/:id', authMiddleware, async (req, res) => {
           batchRequest.input(`itHead${s}`, sql.NVarChar(50), trunc(p.productName || '', 50));
           batchRequest.input(`desc${s}`, sql.NVarChar(200), trunc(p.remark || '', 200));
           batchRequest.input(`stkQty${s}`, sql.Float, parseFloat(p.stkQty || 0));
-          return `(@transNo${s}, @srno${s}, @prCode${s}, @qty${s}, @rate${s}, @lineAmt${s}, @disc${s}, @bkType${s}, @itHead${s}, @desc${s}, @stkQty${s})`;
+          batchRequest.input(`unit${s}`, sql.NVarChar(20), trunc(p.unit || '', 20));         // item unit
+          batchRequest.input(`code${s}`, sql.NVarChar(7), trunc(partyId || '', 7));           // party code
+          batchRequest.input(`uname${s}`, sql.NVarChar(100), loggedInUserName);              // user name
+          return `(@transNo${s}, @srno${s}, @prCode${s}, @qty${s}, @rate${s}, @lineAmt${s}, @disc${s}, @bkType${s}, @itHead${s}, @desc${s}, @stkQty${s}, @unit${s}, @code${s}, @uname${s})`;
         });
 
         await batchRequest.query(`
-          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description, StkQty)
+          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description, StkQty, unit, code, username)
           VALUES ${valuePlaceholders.join(',\n')}
         `);
       }
