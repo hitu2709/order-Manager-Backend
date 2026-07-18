@@ -393,7 +393,8 @@ router.get('/:id', authMiddleware, async (req, res) => {
                COALESCE(b.ac_name, LTRIM(RTRIM(o.Broker_code)), 'Missing Name') as SalesmanName,
                'Pending' as Status, o.amount as TotalAmount,
                a.Place, a.Contact_person, a.ac_name1 as Address2,
-               o.transport as Transport, o.Sp_Note as Notes
+               o.transport as Transport, o.Sp_Note as Notes,
+               o.chek_amt, o.chkOne, o.chkTwo, o.chkThree
         FROM s_order o
         LEFT JOIN Acmast a ON LTRIM(RTRIM(o.client_code)) = LTRIM(RTRIM(a.ac_code))
         LEFT JOIN Acmast b ON LTRIM(RTRIM(o.Broker_code)) = LTRIM(RTRIM(b.ac_code))
@@ -413,7 +414,9 @@ router.get('/:id', authMiddleware, async (req, res) => {
                ISNULL(NULLIF(t.pr_code,''), t.code) as ItemCode, 
                ISNULL(NULLIF(p.prod_name,''), t.ItemHead) as ProductName, 
                t.qty as Quantity, t.rate as UnitPrice, t.discount as Discount, t.amount as TotalPrice,
-               t.Size, t.Quality, t.Description
+               t.Size, t.Quality, t.Description,
+               ISNULL(NULLIF(t.unit,''), p.base_unit) as Unit,
+               t.StkQty
         FROM ord_tran t
         LEFT JOIN Product p ON ISNULL(NULLIF(t.pr_code,''), t.code) = p.prod_code
         WHERE t.trans_no = @id
