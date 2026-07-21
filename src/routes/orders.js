@@ -40,7 +40,8 @@ router.post('/create', authMiddleware, async (req, res) => {
     }
 
     // 2. Get next VouchNo (Daily reset logic)
-    // User requested: vouch number should start from 1 every day
+    // App orders use plain numbers: 1, 2, 3...
+    // Web app orders use W-1, W-2... so we MUST exclude them before CAST(vouch_no AS INT)
     const orderDateObj = orderDate ? new Date(orderDate) : new Date();
     const vouchRequest = new sql.Request(transaction); 
     const maxVouchRes = await vouchRequest
@@ -49,6 +50,7 @@ router.post('/create', authMiddleware, async (req, res) => {
         SELECT MAX(CAST(vouch_no AS INT)) AS maxDayVouch 
         FROM data_no 
         WHERE Book_type = 'SO'
+        AND ISNUMERIC(vouch_no) = 1
         AND trans_no IN (SELECT trans_no FROM s_order WHERE CAST(trans_dt AS DATE) = CAST(@dt AS DATE))
       `);
     
