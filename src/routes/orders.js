@@ -455,7 +455,14 @@ router.put('/:id', authMiddleware, async (req, res) => {
     // Helper to safely truncate strings to max length
     const trunc = (str, len) => String(str || '').substring(0, len);
 
-    // 1. Update s_order (Header)
+    // 1. Read original creation date so we can preserve it after UPDATE
+    //    (SQL triggers on s_order may otherwise stamp GETDATE() on every UPDATE)
+    const origResult = await new sql.Request(transaction)
+      .input('origId', sql.Int, id)
+      .query('SELECT trans_dt FROM s_order WHERE trans_no = @origId');
+    const originalTransDt = origResult.recordset[0]?.trans_dt || new Date();
+
+    // 2. Update s_order (Header) — always restore trans_dt to original creation date
     // flag "1"/"2"/"3" → chkOne/chkTwo/chkThree (selected=1, others=0)
     // adjustment "R"/"M"  → chek_amt
     const flagVal  = String(flag || '1');
@@ -464,6 +471,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
     const chkThree = flagVal === '3' ? 1 : 0;
     await request
       .input('id', sql.Int, id)
+      .input('originalTransDt', sql.DateTime, originalTransDt)
       .input('amount', sql.Float, parseFloat(totalAmount) || 0)
       .input('transport', sql.NVarChar(100), trunc(transport, 100))
       .input('spNote', sql.NText, notes || '')
@@ -476,7 +484,8 @@ router.put('/:id', authMiddleware, async (req, res) => {
       .input('chkThree', sql.Int, chkThree)
       .query(`
         UPDATE s_order 
-        SET amount = @amount, transport = @transport, Sp_Note = @spNote, Broker_code = @brokerCode,
+        SET trans_dt = @originalTransDt,
+            amount = @amount, transport = @transport, Sp_Note = @spNote, Broker_code = @brokerCode,
             client_code = @partyId, username = @username,
             chek_amt = @chekAmt, chkOne = @chkOne, chkTwo = @chkTwo, chkThree = @chkThree
         WHERE trans_no = @id
