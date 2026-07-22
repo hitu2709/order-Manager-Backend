@@ -90,7 +90,15 @@ router.get('/dispatch', authMiddleware, async (req, res) => {
       .input('Till_Date', sql.DateTime,     tillDate)
       .execute('DispatchReport');
 
-    return res.status(200).json({ success: true, data: result.recordset });
+    // Temporarily include columns + sample row so we can see SP schema
+    const columns = result.recordset.length > 0 ? Object.keys(result.recordset[0]) : [];
+    console.log('[DispatchReport] columns:', JSON.stringify(columns));
+    return res.status(200).json({
+      success: true,
+      data: result.recordset,
+      columns,
+      sampleRow: result.recordset[0] || {}
+    });
   } catch (err) {
     console.error('Dispatch report error:', err);
     return res.status(500).json({ success: false, message: 'Error fetching dispatch report: ' + err.message });
