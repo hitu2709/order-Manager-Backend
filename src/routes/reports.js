@@ -68,7 +68,7 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
 });
 
 // GET /api/reports/dispatch
-// Uses challan table — Ord_no is display name (02/04/2026 (1)), trans_no is code
+// Uses challan for header (Ord_no display, trans_no code) + ord_tran for qty
 router.get('/dispatch', authMiddleware, async (req, res) => {
   try {
     const { fromDate, toDate, partyIds, dispatchNos, productIds } = req.query;
@@ -81,19 +81,19 @@ router.get('/dispatch', authMiddleware, async (req, res) => {
         c.Ord_no                               AS DispatchNo,
         CONVERT(varchar(10), c.Cha_dt, 103)   AS DispatchDate,
         a.ac_name                              AS PartyName,
-        SUM(ISNULL(ct.qty, 0))                 AS TotalQty
+        SUM(ISNULL(ot.qty, 0))                 AS TotalQty
       FROM challan c
-      LEFT JOIN Acmast a       ON c.ac_code  = a.ac_code
-      LEFT JOIN challan_tran ct ON c.trans_no = ct.trans_no
+      LEFT JOIN Acmast a   ON c.ac_code  = a.ac_code
+      LEFT JOIN ord_tran ot ON c.trans_no = ot.trans_no
       WHERE 1=1
     `;
 
-    if (fromDate)  { request.input('fromDate', sql.DateTime, new Date(fromDate)); query += ' AND c.Cha_dt >= @fromDate'; }
-    if (toDate)    { request.input('toDate',   sql.DateTime, new Date(toDate));   query += ' AND c.Cha_dt <= @toDate'; }
+    if (fromDate)   { request.input('fromDate',   sql.DateTime, new Date(fromDate)); query += ' AND c.Cha_dt >= @fromDate'; }
+    if (toDate)     { request.input('toDate',     sql.DateTime, new Date(toDate));   query += ' AND c.Cha_dt <= @toDate'; }
 
-    if (partyIds   && partyIds   !== 'All') { request.input('partyIds',   sql.NVarChar(sql.MAX), partyIds);   query += " AND c.ac_code IN (SELECT value FROM STRING_SPLIT(@partyIds, ','))"; }
+    if (partyIds    && partyIds    !== 'All') { request.input('partyIds',    sql.NVarChar(sql.MAX), partyIds);    query += " AND c.ac_code IN (SELECT value FROM STRING_SPLIT(@partyIds, ','))"; }
     if (dispatchNos && dispatchNos !== 'All') { request.input('dispatchNos', sql.NVarChar(sql.MAX), dispatchNos); query += " AND CAST(c.trans_no AS NVARCHAR) IN (SELECT value FROM STRING_SPLIT(@dispatchNos, ','))"; }
-    if (productIds && productIds !== 'All')  { request.input('productIds',  sql.NVarChar(sql.MAX), productIds);  query += " AND EXISTS (SELECT 1 FROM challan_tran ct2 WHERE ct2.trans_no = c.trans_no AND ct2.pr_code IN (SELECT value FROM STRING_SPLIT(@productIds, ',')))"; }
+    if (productIds  && productIds  !== 'All') { request.input('productIds',  sql.NVarChar(sql.MAX), productIds);  query += " AND EXISTS (SELECT 1 FROM ord_tran ot2 WHERE ot2.trans_no = c.trans_no AND ot2.pr_code IN (SELECT value FROM STRING_SPLIT(@productIds, ',')))"; }
 
     query += ' GROUP BY c.trans_no, c.Ord_no, c.Cha_dt, a.ac_name ORDER BY c.Cha_dt DESC, c.trans_no DESC';
 
@@ -290,17 +290,16 @@ router.get('/supplier-orders', authMiddleware, async (req, res) => {
 });
 
 
-
 // GET /api/reports/dispatch-parties
-// Distinct parties from challan table
+// Same Acmast DEBTORS list as pending orders — no challan join needed
 router.get('/dispatch-parties', authMiddleware, async (req, res) => {
   try {
     const pool = getPool();
     const result = await pool.request().query(`
-      SELECT DISTINCT a.ac_code AS PartyID, a.ac_name AS PartyName
-      FROM challan c
-      JOIN Acmast a ON c.ac_code = a.ac_code
-      ORDER BY a.ac_name
+      SELECT ac_code AS PartyID, ac_name AS PartyName
+      FROM Acmast
+      WHERE grp_name LIKE '%DEBTORS%'
+      ORDER BY ac_name
     `);
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
@@ -314,13 +313,15 @@ router.get('/dispatch-parties', authMiddleware, async (req, res) => {
 // Returns Ord_no (display) + trans_no (code) from challan table
 router.get('/dispatch-numbers', authMiddleware, async (req, res) => {
   try {
-    const { partyIds, productIds } = req.query;
+    const { partyIds } = req.query;
     const pool = getPool();
     const request = pool.request();
 
     let query = `SELECT TOP 1000 c.trans_no AS Trans_No, c.Ord_no AS Vouchno FROM challan c WHERE 1=1`;
-    if (partyIds   && partyIds   !== 'All') { request.input('partyIds',   sql.NVarChar(sql.MAX), partyIds);   query += " AND c.ac_code IN (SELECT value FROM STRING_SPLIT(@partyIds, ','))"; }
-    if (productIds && productIds !== 'All') { request.input('productIds', sql.NVarChar(sql.MAX), productIds); query += " AND EXISTS (SELECT 1 FROM challan_tran ct WHERE ct.trans_no = c.trans_no AND ct.pr_code IN (SELECT value FROM STRING_SPLIT(@productIds, ',')))"; }
+    if (partyIds && partyIds !== 'All') {
+      request.input('partyIds', sql.NVarChar(sql.MAX), partyIds);
+      query += " AND c.ac_code IN (SELECT value FROM STRING_SPLIT(@partyIds, ','))";
+    }
     query += ' ORDER BY c.trans_no DESC';
 
     const result = await request.query(query);
@@ -332,26 +333,13 @@ router.get('/dispatch-numbers', authMiddleware, async (req, res) => {
 });
 
 // GET /api/reports/dispatch-products
-// Products that appear in challan line items (challan_tran)
+// Same Product table as pending orders — no challan_tran needed
 router.get('/dispatch-products', authMiddleware, async (req, res) => {
   try {
-    const { partyIds, dispatchNos } = req.query;
     const pool = getPool();
-    const request = pool.request();
-
-    let subQuery = `
-      SELECT DISTINCT ct.pr_code
-      FROM challan_tran ct
-      JOIN challan c ON ct.trans_no = c.trans_no
-      WHERE 1=1
-    `;
-    if (partyIds   && partyIds   !== 'All') { request.input('partyIds',   sql.NVarChar(sql.MAX), partyIds);   subQuery += " AND c.ac_code IN (SELECT value FROM STRING_SPLIT(@partyIds, ','))"; }
-    if (dispatchNos && dispatchNos !== 'All') { request.input('dispatchNos', sql.NVarChar(sql.MAX), dispatchNos); subQuery += " AND CAST(c.trans_no AS NVARCHAR) IN (SELECT value FROM STRING_SPLIT(@dispatchNos, ','))"; }
-
-    const result = await request.query(`
+    const result = await pool.request().query(`
       SELECT prod_code AS ItemCode, prod_name AS ProductName, base_unit AS Unit
       FROM Product
-      WHERE prod_code IN (${subQuery})
       ORDER BY prod_code
     `);
     return res.status(200).json({ success: true, data: result.recordset });
