@@ -68,39 +68,40 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
 });
 
 // GET /api/reports/dispatch
-// Uses s_order with book_type='DC' and ord_tran (same tables as pending orders)
+// Uses challan table — Ord_no is display name (02/04/2026 (1)), trans_no is code
 router.get('/dispatch', authMiddleware, async (req, res) => {
   try {
-    const { fromDate, toDate, partyId, dispatchNo, productId } = req.query;
+    const { fromDate, toDate, partyIds, dispatchNos, productIds } = req.query;
     const pool = getPool();
     const request = pool.request();
 
     let query = `
       SELECT
-        d.trans_no                              AS DispatchID,
-        d.VouchNo                               AS DispatchNo,
-        CONVERT(varchar(10), d.trans_dt, 103)   AS DispatchDate,
-        a.ac_name                               AS PartyName,
-        SUM(ISNULL(ot.Qty, 0))                  AS TotalQty
-      FROM s_order d
-      LEFT JOIN Acmast a    ON d.client_code = a.ac_code
-      LEFT JOIN ord_tran ot ON d.trans_no    = ot.trans_no
-      WHERE d.book_type = 'DC'
+        c.trans_no                             AS DispatchID,
+        c.Ord_no                               AS DispatchNo,
+        CONVERT(varchar(10), c.Cha_dt, 103)   AS DispatchDate,
+        a.ac_name                              AS PartyName,
+        SUM(ISNULL(ct.qty, 0))                 AS TotalQty
+      FROM challan c
+      LEFT JOIN Acmast a       ON c.ac_code  = a.ac_code
+      LEFT JOIN challan_tran ct ON c.trans_no = ct.trans_no
+      WHERE 1=1
     `;
 
-    if (fromDate)  { request.input('fromDate',   sql.DateTime, new Date(fromDate)); query += ' AND d.trans_dt >= @fromDate'; }
-    if (toDate)    { request.input('toDate',     sql.DateTime, new Date(toDate));   query += ' AND d.trans_dt <= @toDate'; }
-    if (partyId    && partyId    !== 'All') { request.input('partyId',    sql.VarChar, partyId);    query += ' AND d.client_code = @partyId'; }
-    if (dispatchNo && dispatchNo !== 'All') { request.input('dispatchNo', sql.VarChar, dispatchNo); query += ' AND d.VouchNo = @dispatchNo'; }
-    if (productId  && productId  !== 'All') { request.input('productId',  sql.VarChar, productId);  query += ' AND EXISTS (SELECT 1 FROM ord_tran ot2 WHERE ot2.trans_no = d.trans_no AND ot2.pr_code = @productId)'; }
+    if (fromDate)  { request.input('fromDate', sql.DateTime, new Date(fromDate)); query += ' AND c.Cha_dt >= @fromDate'; }
+    if (toDate)    { request.input('toDate',   sql.DateTime, new Date(toDate));   query += ' AND c.Cha_dt <= @toDate'; }
 
-    query += ' GROUP BY d.trans_no, d.VouchNo, d.trans_dt, a.ac_name ORDER BY d.trans_dt DESC, d.trans_no DESC';
+    if (partyIds   && partyIds   !== 'All') { request.input('partyIds',   sql.NVarChar(sql.MAX), partyIds);   query += " AND c.ac_code IN (SELECT value FROM STRING_SPLIT(@partyIds, ','))"; }
+    if (dispatchNos && dispatchNos !== 'All') { request.input('dispatchNos', sql.NVarChar(sql.MAX), dispatchNos); query += " AND CAST(c.trans_no AS NVARCHAR) IN (SELECT value FROM STRING_SPLIT(@dispatchNos, ','))"; }
+    if (productIds && productIds !== 'All')  { request.input('productIds',  sql.NVarChar(sql.MAX), productIds);  query += " AND EXISTS (SELECT 1 FROM challan_tran ct2 WHERE ct2.trans_no = c.trans_no AND ct2.pr_code IN (SELECT value FROM STRING_SPLIT(@productIds, ',')))"; }
+
+    query += ' GROUP BY c.trans_no, c.Ord_no, c.Cha_dt, a.ac_name ORDER BY c.Cha_dt DESC, c.trans_no DESC';
 
     const result = await request.query(query);
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Dispatch report error:', err);
-    return res.status(500).json({ success: false, message: 'Error fetching dispatch report' });
+    return res.status(500).json({ success: false, message: 'Error fetching dispatch report: ' + err.message });
   }
 });
 
@@ -289,66 +290,66 @@ router.get('/supplier-orders', authMiddleware, async (req, res) => {
 });
 
 
+
 // GET /api/reports/dispatch-parties
-// Returns distinct debtors who have dispatch (DC) records in s_order
+// Distinct parties from challan table
 router.get('/dispatch-parties', authMiddleware, async (req, res) => {
   try {
     const pool = getPool();
     const result = await pool.request().query(`
       SELECT DISTINCT a.ac_code AS PartyID, a.ac_name AS PartyName
-      FROM s_order d
-      JOIN Acmast a ON d.client_code = a.ac_code
-      WHERE d.book_type = 'DC'
+      FROM challan c
+      JOIN Acmast a ON c.ac_code = a.ac_code
       ORDER BY a.ac_name
     `);
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Dispatch parties error:', err);
-    return res.status(500).json({ success: false, message: 'Error fetching dispatch parties' });
+    return res.status(500).json({ success: false, message: 'Error fetching dispatch parties: ' + err.message });
   }
 });
 
 
 // GET /api/reports/dispatch-numbers
-// Returns dispatch voucher numbers (Vouchno) from s_order where book_type='DC'
+// Returns Ord_no (display) + trans_no (code) from challan table
 router.get('/dispatch-numbers', authMiddleware, async (req, res) => {
   try {
-    const { partyId, productId } = req.query;
+    const { partyIds, productIds } = req.query;
     const pool = getPool();
     const request = pool.request();
 
-    let query = `SELECT TOP 500 d.trans_no AS Trans_No, d.VouchNo AS Vouchno FROM s_order d WHERE d.book_type = 'DC'`;
-    if (partyId   && partyId   !== 'All') { request.input('partyId',   sql.VarChar, partyId);   query += ' AND d.client_code = @partyId'; }
-    if (productId && productId !== 'All') { request.input('productId', sql.VarChar, productId); query += ' AND EXISTS (SELECT 1 FROM ord_tran ot WHERE ot.trans_no = d.trans_no AND ot.pr_code = @productId)'; }
-    query += ' ORDER BY d.trans_no DESC';
+    let query = `SELECT TOP 1000 c.trans_no AS Trans_No, c.Ord_no AS Vouchno FROM challan c WHERE 1=1`;
+    if (partyIds   && partyIds   !== 'All') { request.input('partyIds',   sql.NVarChar(sql.MAX), partyIds);   query += " AND c.ac_code IN (SELECT value FROM STRING_SPLIT(@partyIds, ','))"; }
+    if (productIds && productIds !== 'All') { request.input('productIds', sql.NVarChar(sql.MAX), productIds); query += " AND EXISTS (SELECT 1 FROM challan_tran ct WHERE ct.trans_no = c.trans_no AND ct.pr_code IN (SELECT value FROM STRING_SPLIT(@productIds, ',')))"; }
+    query += ' ORDER BY c.trans_no DESC';
 
     const result = await request.query(query);
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Dispatch numbers error:', err);
-    return res.status(500).json({ success: false, message: 'Error fetching dispatch numbers' });
+    return res.status(500).json({ success: false, message: 'Error fetching dispatch numbers: ' + err.message });
   }
 });
 
 // GET /api/reports/dispatch-products
-// Returns products that appear in DC dispatches using ord_tran + Product table
+// Products that appear in challan line items (challan_tran)
 router.get('/dispatch-products', authMiddleware, async (req, res) => {
   try {
-    const { partyId, dispatchNo } = req.query;
+    const { partyIds, dispatchNos } = req.query;
     const pool = getPool();
     const request = pool.request();
 
     let subQuery = `
-      SELECT DISTINCT ot.pr_code
-      FROM ord_tran ot
-      JOIN s_order d ON ot.trans_no = d.trans_no
-      WHERE d.book_type = 'DC'
+      SELECT DISTINCT ct.pr_code
+      FROM challan_tran ct
+      JOIN challan c ON ct.trans_no = c.trans_no
+      WHERE 1=1
     `;
-    if (partyId    && partyId    !== 'All') { request.input('partyId',    sql.VarChar, partyId);    subQuery += ' AND d.client_code = @partyId'; }
-    if (dispatchNo && dispatchNo !== 'All') { request.input('dispatchNo', sql.VarChar, dispatchNo); subQuery += ' AND d.VouchNo = @dispatchNo'; }
+    if (partyIds   && partyIds   !== 'All') { request.input('partyIds',   sql.NVarChar(sql.MAX), partyIds);   subQuery += " AND c.ac_code IN (SELECT value FROM STRING_SPLIT(@partyIds, ','))"; }
+    if (dispatchNos && dispatchNos !== 'All') { request.input('dispatchNos', sql.NVarChar(sql.MAX), dispatchNos); subQuery += " AND CAST(c.trans_no AS NVARCHAR) IN (SELECT value FROM STRING_SPLIT(@dispatchNos, ','))"; }
 
     const result = await request.query(`
-      SELECT prod_code AS ItemCode, prod_name AS ProductName, unit1 AS Unit
+      SELECT prod_code AS ItemCode, prod_name AS ProductName, base_unit AS Unit
       FROM Product
       WHERE prod_code IN (${subQuery})
       ORDER BY prod_code
@@ -356,7 +357,7 @@ router.get('/dispatch-products', authMiddleware, async (req, res) => {
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Dispatch products error:', err);
-    return res.status(500).json({ success: false, message: 'Error fetching dispatch products' });
+    return res.status(500).json({ success: false, message: 'Error fetching dispatch products: ' + err.message });
   }
 });
 
