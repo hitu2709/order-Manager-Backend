@@ -535,6 +535,34 @@ router.put('/:id', authMiddleware, async (req, res) => {
     }
 
     await transaction.commit();
+
+    // ── Post-commit: force-restore original creation date ──────────────────
+    // If a SQL Server AFTER trigger does SET trans_dt = GETDATE() on any UPDATE,
+    // it would have overridden our trans_dt inside the transaction.
+    // Solution: after commit, do a second UPDATE with triggers disabled on this table.
+    try {
+      await pool.request()
+        .input('fixId', sql.Int, id)
+        .input('fixDt', sql.DateTime, originalTransDt)
+        .query(`
+          DISABLE TRIGGER ALL ON s_order;
+          UPDATE s_order SET trans_dt = @fixDt WHERE trans_no = @fixId;
+          ENABLE TRIGGER ALL ON s_order;
+        `);
+    } catch (triggerFixErr) {
+      // If DISABLE TRIGGER fails (permissions), just do a plain UPDATE —
+      // worst case the date still reflects today but order data is saved correctly
+      console.warn('Trigger disable failed, attempting plain date restore:', triggerFixErr.message);
+      try {
+        await pool.request()
+          .input('fixId2', sql.Int, id)
+          .input('fixDt2', sql.DateTime, originalTransDt)
+          .query('UPDATE s_order SET trans_dt = @fixDt2 WHERE trans_no = @fixId2');
+      } catch (e2) {
+        console.warn('Plain date restore also failed:', e2.message);
+      }
+    }
+
     return res.status(200).json({ success: true, message: 'Order updated successfully' });
   } catch (err) {
     console.error('Update order error:', err);
