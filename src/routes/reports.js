@@ -68,42 +68,35 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
 });
 
 // GET /api/reports/dispatch
-// Uses challan for header (Ord_no display, trans_no code) + ord_tran for qty
+// Calls DispatchReport stored procedure — same as web app
 router.get('/dispatch', authMiddleware, async (req, res) => {
   try {
     const { fromDate, toDate, partyIds, dispatchNos, productIds } = req.query;
     const pool = getPool();
-    const request = pool.request();
 
-    let query = `
-      SELECT
-        c.trans_no                             AS DispatchID,
-        c.Ord_no                               AS DispatchNo,
-        CONVERT(varchar(10), c.Cha_dt, 103)   AS DispatchDate,
-        a.ac_name                              AS PartyName,
-        SUM(ISNULL(ot.qty, 0))                 AS TotalQty
-      FROM challan c
-      LEFT JOIN Acmast a   ON c.ac_code  = a.ac_code
-      LEFT JOIN ord_tran ot ON c.trans_no = ot.trans_no
-      WHERE 1=1
-    `;
+    // SP accepts single values — use first of multi-select, '' for All
+    const accCode  = (partyIds    && partyIds    !== 'All') ? partyIds.split(',')[0]    : '';
+    const prodCode = (productIds  && productIds  !== 'All') ? productIds.split(',')[0]  : '';
+    // VouchNo uses the Ord_no string (e.g. "3 (22/07/2026)"), not the numeric trans_no
+    const vouchNo  = (dispatchNos && dispatchNos !== 'All') ? dispatchNos.split(',')[0] : '';
+    const frmDate  = fromDate ? new Date(fromDate) : new Date();
+    const tillDate = toDate   ? new Date(toDate)   : new Date();
 
-    if (fromDate)   { request.input('fromDate',   sql.DateTime, new Date(fromDate)); query += ' AND c.Cha_dt >= @fromDate'; }
-    if (toDate)     { request.input('toDate',     sql.DateTime, new Date(toDate));   query += ' AND c.Cha_dt <= @toDate'; }
+    const result = await pool.request()
+      .input('Acc_Code',  sql.VarChar(10),  accCode)
+      .input('Prod_code', sql.VarChar(20),  prodCode)
+      .input('VouchNo',   sql.VarChar(50),  vouchNo)
+      .input('Frm_Date',  sql.DateTime,     frmDate)
+      .input('Till_Date', sql.DateTime,     tillDate)
+      .execute('DispatchReport');
 
-    if (partyIds    && partyIds    !== 'All') { request.input('partyIds',    sql.NVarChar(sql.MAX), partyIds);    query += " AND c.ac_code IN (SELECT value FROM STRING_SPLIT(@partyIds, ','))"; }
-    if (dispatchNos && dispatchNos !== 'All') { request.input('dispatchNos', sql.NVarChar(sql.MAX), dispatchNos); query += " AND CAST(c.trans_no AS NVARCHAR) IN (SELECT value FROM STRING_SPLIT(@dispatchNos, ','))"; }
-    if (productIds  && productIds  !== 'All') { request.input('productIds',  sql.NVarChar(sql.MAX), productIds);  query += " AND EXISTS (SELECT 1 FROM ord_tran ot2 WHERE ot2.trans_no = c.trans_no AND ot2.pr_code IN (SELECT value FROM STRING_SPLIT(@productIds, ',')))"; }
-
-    query += ' GROUP BY c.trans_no, c.Ord_no, c.Cha_dt, a.ac_name ORDER BY c.Cha_dt DESC, c.trans_no DESC';
-
-    const result = await request.query(query);
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Dispatch report error:', err);
     return res.status(500).json({ success: false, message: 'Error fetching dispatch report: ' + err.message });
   }
 });
+
 
 // GET /api/reports/stock
 // Calls the SAME stored procedures as the web app:
