@@ -21,6 +21,15 @@ router.post('/create', authMiddleware, async (req, res) => {
     });
   }
 
+  const MAX_PER_ORDER = 100; // ← hard limit per order
+
+  // Split products into chunks of MAX_PER_ORDER
+  const chunks = [];
+  for (let i = 0; i < products.length; i += MAX_PER_ORDER) {
+    chunks.push(products.slice(i, i + MAX_PER_ORDER));
+  }
+  const numOrders = chunks.length;
+
   const pool = getPool();
   const transaction = new sql.Transaction(pool);
 
@@ -28,23 +37,16 @@ router.post('/create', authMiddleware, async (req, res) => {
     await transaction.begin();
     const request = new sql.Request(transaction);
 
-    // Calculate total amount (use provided or calculate)
-    const calcTotal = totalAmount || products.reduce((sum, p) => sum + (p.quantity * p.unitPrice - (p.discount || 0)), 0);
-
-    // 1. Get next trans_no (Global from data_no)
-    // We use UPDLOCK, HOLDLOCK to prevent race conditions during heavy traffic
+    // 1. Get starting trans_no — lock the table so concurrent requests don't collide
     const maxRes = await request.query(`SELECT MAX(trans_no) as maxId FROM data_no WITH (UPDLOCK, HOLDLOCK)`);
-    let nextTransNo = 100000001; // Default start if table is empty
+    let baseTransNo = 100000001;
     if (maxRes.recordset.length > 0 && maxRes.recordset[0].maxId) {
-       nextTransNo = parseInt(maxRes.recordset[0].maxId) + 1;
+      baseTransNo = parseInt(maxRes.recordset[0].maxId) + 1;
     }
 
-    // 2. Get next VouchNo (Daily reset logic)
-    // App orders use plain numbers: 1, 2, 3...
-    // Web app orders use W-1, W-2... so we MUST exclude them before CAST(vouch_no AS INT)
+    // 2. Get starting VouchNo (daily reset; numeric only — exclude W-N web vouchers)
     const orderDateObj = orderDate ? new Date(orderDate) : new Date();
-    const vouchRequest = new sql.Request(transaction); 
-    const maxVouchRes = await vouchRequest
+    const maxVouchRes = await new sql.Request(transaction)
       .input('dt', sql.DateTime, orderDateObj)
       .query(`
         SELECT MAX(CAST(vouch_no AS INT)) AS maxDayVouch 
@@ -53,90 +55,100 @@ router.post('/create', authMiddleware, async (req, res) => {
         AND ISNUMERIC(vouch_no) = 1
         AND trans_no IN (SELECT trans_no FROM s_order WHERE CAST(trans_dt AS DATE) = CAST(@dt AS DATE))
       `);
-    
-    let nextVouchNo = 1;
+    let baseVouchNo = 1;
     if (maxVouchRes.recordset.length > 0 && maxVouchRes.recordset[0].maxDayVouch) {
-       nextVouchNo = parseInt(maxVouchRes.recordset[0].maxDayVouch) + 1;
+      baseVouchNo = parseInt(maxVouchRes.recordset[0].maxDayVouch) + 1;
     }
 
-    // 3. Insert into data_no table first (The lock-claim)
-    await request
-      .input('dTransNo', sql.BigInt, nextTransNo)
-      .input('dVouchNo', sql.NVarChar(10), String(nextVouchNo))
-      .input('dBookType', sql.NVarChar(2), 'SO')
-      .input('dDate', sql.DateTime, new Date())
-      .query(`
-        INSERT INTO data_no (trans_no, vouch_no, Book_type, sub_type, sydate)
-        VALUES (@dTransNo, @dVouchNo, @dBookType, NULL, @dDate)
-      `);
+    const trunc        = (str, len) => String(str || '').substring(0, len);
+    const flagVal      = String(flag || '1');
+    const chkOne       = flagVal === '1' ? 1 : 0;
+    const chkTwo       = flagVal === '2' ? 1 : 0;
+    const chkThree     = flagVal === '3' ? 1 : 0;
+    const loggedInUser = trunc(String((req.user && req.user.userName) || 'admin'), 100);
+    const transDt      = orderDateObj;
+    const createdIds   = [];
 
-    // Helper to safely truncate strings to max length
-    const trunc = (str, len) => String(str || '').substring(0, len);
+    // 3. For each chunk: insert data_no → s_order → ord_tran rows
+    for (let ci = 0; ci < numOrders; ci++) {
+      const chunk   = chunks[ci];
+      const transNo = baseTransNo + ci;
+      const vouchNo = baseVouchNo + ci;
+      const chunkTotal = chunk.reduce((sum, p) =>
+        sum + (parseFloat(p.quantity) * parseFloat(p.unitPrice) - parseFloat(p.discount || 0)), 0);
 
-    // 2. Insert the order header into s_order
-    // flag "1"/"2"/"3" → chkOne/chkTwo/chkThree (selected=1, others=0)
-    // adjustment "R"/"M"  → chek_amt
-    const flagVal  = String(flag || '1');
-    const chkOne   = flagVal === '1' ? 1 : 0;
-    const chkTwo   = flagVal === '2' ? 1 : 0;
-    const chkThree = flagVal === '3' ? 1 : 0;
-    await request
-      .input('transNo', sql.Int, nextTransNo)
-      .input('transDt', sql.DateTime, orderDate ? new Date(orderDate) : new Date())
-      .input('clientCode', sql.NVarChar(7), trunc(partyId, 7))
-      .input('amount', sql.Float, calcTotal)
-      .input('transport', sql.NVarChar(100), trunc(transport, 100))
-      .input('inspection', sql.NVarChar(500), trunc(notes || '', 500))
-      .input('username', sql.VarChar(100), trunc(String((req.user && req.user.userName) || 'admin'), 100))
-      .input('brokerCode', sql.NVarChar(7), trunc(salesmanId || '', 7))
-      .input('bookType', sql.NVarChar(2), 'SO')
-      .input('vouchNo', sql.NVarChar(10), trunc(String(nextVouchNo), 10))
-      .input('addStock', sql.NVarChar(1), '')
-      .input('chekAmt', sql.NVarChar(5), trunc(String(adjustment || ''), 5))  // R or M
-      .input('chkOne',   sql.Int, chkOne)
-      .input('chkTwo',   sql.Int, chkTwo)
-      .input('chkThree', sql.Int, chkThree)
-      .query(`
-        INSERT INTO s_order (trans_no, trans_dt, client_code, amount, transport, Inspection, username, Broker_code, book_type, VouchNo, AddStock, chek_amt, chkOne, chkTwo, chkThree)
-        VALUES (@transNo, @transDt, @clientCode, @amount, @transport, @inspection, @username, @brokerCode, @bookType, @vouchNo, @addStock, @chekAmt, @chkOne, @chkTwo, @chkThree)
-      `);
+      // 3a. data_no — claim the trans_no / vouch_no slot
+      await new sql.Request(transaction)
+        .input('dTransNo',  sql.BigInt,     transNo)
+        .input('dVouchNo',  sql.NVarChar(10), String(vouchNo))
+        .input('dBookType', sql.NVarChar(2), 'SO')
+        .input('dDate',     sql.DateTime,   new Date())
+        .query(`INSERT INTO data_no (trans_no, vouch_no, Book_type, sub_type, sydate)
+                VALUES (@dTransNo, @dVouchNo, @dBookType, NULL, @dDate)`);
 
-    // 3. Insert each product into ord_tran
-    const loggedInUserName = trunc(String((req.user && req.user.userName) || 'admin'), 100);
-    for (let i = 0; i < products.length; i++) {
-      const p = products[i];
-      const prodRequest = new sql.Request(transaction);
-      const discPct = parseFloat(p.discountPercent || 0);
-      const qty     = parseFloat(p.quantity) || 0;
-      const rate    = parseFloat(p.unitPrice) || 0;
-      const discAmt = qty * rate * (discPct / 100);
-      await prodRequest
-        .input('transNo', sql.Int, nextTransNo)
-        .input('srno', sql.Int, i + 1)
-        .input('prCode', sql.VarChar(50), trunc(p.itemCode || p.ProductID || '', 50))
-        .input('qty', sql.Float, qty)
-        .input('rate', sql.Real, rate)
-        .input('lineAmount', sql.Float, qty * rate - discAmt)   // net amount
-        .input('discount', sql.Money, discPct)                   // store % not ₹
-        .input('bookType', sql.NVarChar(2), 'SO')
-        .input('itemHead', sql.NVarChar(50), trunc(p.productName || '', 50))
-        .input('description', sql.NVarChar(200), trunc(p.remark || '', 200))
-        .input('stkQty', sql.Float, parseFloat(p.stkQty || 0))
-        .input('unit', sql.NVarChar(20), trunc(p.unit || '', 20))             // item unit (e.g. PCS)
-        .input('code', sql.NVarChar(7), trunc(partyId || '', 7))              // party code
-        .input('userName', sql.NVarChar(100), loggedInUserName)               // logged-in user name
-        .query(`
-          INSERT INTO ord_tran (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description, StkQty, unit, code, username)
-          VALUES (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead, @description, @stkQty, @unit, @code, @userName)
-        `);
+      // 3b. s_order header
+      await new sql.Request(transaction)
+        .input('transNo',    sql.Int,          transNo)
+        .input('transDt',    sql.DateTime,     transDt)
+        .input('clientCode', sql.NVarChar(7),  trunc(partyId, 7))
+        .input('amount',     sql.Float,        chunkTotal)
+        .input('transport',  sql.NVarChar(100), trunc(transport, 100))
+        .input('inspection', sql.NVarChar(500), trunc(notes || '', 500))
+        .input('username',   sql.VarChar(100), loggedInUser)
+        .input('brokerCode', sql.NVarChar(7),  trunc(salesmanId || '', 7))
+        .input('bookType',   sql.NVarChar(2),  'SO')
+        .input('vouchNo',    sql.NVarChar(10), trunc(String(vouchNo), 10))
+        .input('addStock',   sql.NVarChar(1),  '')
+        .input('chekAmt',    sql.NVarChar(5),  trunc(String(adjustment || ''), 5))
+        .input('chkOne',     sql.Int,          chkOne)
+        .input('chkTwo',     sql.Int,          chkTwo)
+        .input('chkThree',   sql.Int,          chkThree)
+        .query(`INSERT INTO s_order
+                  (trans_no, trans_dt, client_code, amount, transport, Inspection, username, Broker_code, book_type, VouchNo, AddStock, chek_amt, chkOne, chkTwo, chkThree)
+                VALUES
+                  (@transNo, @transDt, @clientCode, @amount, @transport, @inspection, @username, @brokerCode, @bookType, @vouchNo, @addStock, @chekAmt, @chkOne, @chkTwo, @chkThree)`);
+
+      // 3c. ord_tran rows for this chunk (srno resets to 1 for each new order)
+      for (let i = 0; i < chunk.length; i++) {
+        const p       = chunk[i];
+        const discPct = parseFloat(p.discountPercent || 0);
+        const qty     = parseFloat(p.quantity) || 0;
+        const rate    = parseFloat(p.unitPrice) || 0;
+        const discAmt = qty * rate * (discPct / 100);
+        await new sql.Request(transaction)
+          .input('transNo',    sql.Int,          transNo)
+          .input('srno',       sql.Int,          i + 1)
+          .input('prCode',     sql.VarChar(50),  trunc(p.itemCode || p.ProductID || '', 50))
+          .input('qty',        sql.Float,        qty)
+          .input('rate',       sql.Real,         rate)
+          .input('lineAmount', sql.Float,        qty * rate - discAmt)
+          .input('discount',   sql.Money,        discPct)
+          .input('bookType',   sql.NVarChar(2),  'SO')
+          .input('itemHead',   sql.NVarChar(50), trunc(p.productName || '', 50))
+          .input('description',sql.NVarChar(200),trunc(p.remark || '', 200))
+          .input('stkQty',     sql.Float,        parseFloat(p.stkQty || 0))
+          .input('unit',       sql.NVarChar(20), trunc(p.unit || '', 20))
+          .input('code',       sql.NVarChar(7),  trunc(partyId || '', 7))
+          .input('userName',   sql.NVarChar(100),loggedInUser)
+          .query(`INSERT INTO ord_tran
+                    (trans_no, srno, pr_code, qty, rate, amount, discount, book_type, ItemHead, Description, StkQty, unit, code, username)
+                  VALUES
+                    (@transNo, @srno, @prCode, @qty, @rate, @lineAmount, @discount, @bookType, @itemHead, @description, @stkQty, @unit, @code, @userName)`);
+      }
+
+      createdIds.push(transNo);
     }
 
     await transaction.commit();
 
     return res.status(201).json({
-      success: true,
-      message: 'Order created successfully',
-      orderId: nextTransNo,
+      success:    true,
+      message:    numOrders > 1
+        ? `${numOrders} orders created (${products.length} products split into groups of ${MAX_PER_ORDER})`
+        : 'Order created successfully',
+      orderId:    createdIds[0],
+      orderIds:   createdIds,
+      orderCount: numOrders,
     });
   } catch (err) {
     if (transaction) {
@@ -149,6 +161,7 @@ router.post('/create', authMiddleware, async (req, res) => {
     });
   }
 });
+
 
 // GET /api/parties
 // Get all parties for dropdown using Acmast
