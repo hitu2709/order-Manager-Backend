@@ -91,12 +91,42 @@ router.get('/dispatch', authMiddleware, async (req, res) => {
       .input('Till_Date', sql.DateTime,     tillDate)
       .execute('DispatchReport');
 
-    return res.status(200).json({ success: true, data: result.recordset });
+    // ── Fetch packing charge fields from dbo.challan ──────────────────────────
+    // pcs * SqrMtr = GrsWgt  and  pcs1 * SqrMtr1 = GrsWgt1
+    const rows = result.recordset || [];
+    const transNos = [...new Set(rows.map(r => r.Trans_no).filter(n => n != null && n !== ''))];
+    if (transNos.length > 0) {
+      try {
+        const packResult = await pool.request().query(
+          `SELECT Trans_no, pcs, SqrMtr, GrsWgt, pcs1, SqrMtr1, GrsWgt1
+           FROM dbo.challan
+           WHERE Trans_no IN (${transNos.join(',')})`
+        );
+        const packMap = {};
+        packResult.recordset.forEach(r => { packMap[String(r.Trans_no)] = r; });
+        rows.forEach(r => {
+          const pack = packMap[String(r.Trans_no)];
+          if (pack) {
+            r._pcs     = pack.pcs     ?? 0;
+            r._sqrMtr  = pack.SqrMtr  ?? 0;
+            r._grsWgt  = pack.GrsWgt  ?? 0;
+            r._pcs1    = pack.pcs1    ?? 0;
+            r._sqrMtr1 = pack.SqrMtr1 ?? 0;
+            r._grsWgt1 = pack.GrsWgt1 ?? 0;
+          }
+        });
+      } catch (packErr) {
+        console.warn('Could not fetch packing charge from dbo.challan:', packErr.message);
+      }
+    }
+
+    return res.status(200).json({ success: true, data: rows });
   } catch (err) {
     console.error('Dispatch report error:', err);
     return res.status(500).json({ success: false, message: 'Error fetching dispatch report: ' + err.message });
   }
 });
+
 
 
 // GET /api/reports/stock
