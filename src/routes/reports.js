@@ -58,7 +58,7 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
     }
     if (productId && productId !== 'All') { request.input('productId', sql.VarChar, productId); query += ' AND ot.pr_code = @productId'; }
     if (pendingOnly === 'true') { query += ' AND (ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0)) > 0'; }
-    query += ' ORDER BY o.trans_no DESC, p.prod_code';
+    query += ' ORDER BY o.trans_no DESC, ot.srno ASC';
 
     const result = await request.query(query);
     return res.status(200).json({ success: true, data: result.recordset });
