@@ -29,6 +29,7 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
       SELECT
         o.trans_no        AS OrderNo,
         o.VouchNo         AS VouchNo,
+        ot.srno           AS SrNo,
         CONVERT(varchar(10), o.trans_dt, 103) AS OrderDate,
         a.ac_name         AS PartyName,
         p.prod_code       AS ItemCode,
