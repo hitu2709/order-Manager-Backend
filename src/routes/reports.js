@@ -33,17 +33,17 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
         CONVERT(varchar(10), o.trans_dt, 103) AS OrderDate,
         a.ac_code         AS PartyCode,
         a.ac_name         AS PartyName,
-        ISNULL(o.Trans_to, '')                                                  AS Transport,
+        ISNULL(o.transport, '')                                                 AS Transport,
         p.prod_code       AS ItemCode,
         p.prod_name       AS ProductName,
-        ISNULL(p.prod_unit, 'PC')                                               AS Unit,
+        ISNULL(ot.unit, 'PC')                                                   AS Unit,
         ISNULL(ot.Qty, 0)                                                       AS OrderQty,
         ISNULL(ot.Rec_Qty, 0)                                                   AS DispatchQty,
-        ISNULL(ot.SetoffQty, 0)                                                 AS SetoffQty,
-        ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetoffQty, 0)   AS BalQty,
+        ISNULL(ot.SetOffQty, 0)                                                 AS SetoffQty,
+        ISNULL(ot.Qty, 0) - ISNULL(ot.Rec_Qty, 0) - ISNULL(ot.SetOffQty, 0)   AS BalQty,
         ISNULL(ot.rate, 0)                                                      AS Rate,
-        ISNULL(ot.disc, 0)                                                      AS Disc,
-        ISNULL(ot.Qty, 0) * ISNULL(ot.rate, 0)                                 AS Amount
+        ISNULL(ot.discount, 0)                                                  AS Disc,
+        ISNULL(ot.amount, 0)                                                    AS Amount
       FROM s_order o
       LEFT JOIN Acmast a    ON o.client_code = a.ac_code
       LEFT JOIN ord_tran ot ON o.trans_no    = ot.trans_no
@@ -75,26 +75,6 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
   }
 });
 
-// TEMP DIAGNOSTIC: GET /api/reports/db-columns (no auth — remove after use)
-router.get('/db-columns', async (req, res) => {
-  try {
-    const pool = getPool();
-    const result = await pool.request().query(`
-      SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE
-      FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_NAME IN ('s_order','ord_tran','Product')
-      ORDER BY TABLE_NAME, ORDINAL_POSITION
-    `);
-    const grouped = {};
-    result.recordset.forEach(r => {
-      if (!grouped[r.TABLE_NAME]) grouped[r.TABLE_NAME] = [];
-      grouped[r.TABLE_NAME].push(r.COLUMN_NAME + ' (' + r.DATA_TYPE + ')');
-    });
-    return res.status(200).json({ success: true, data: grouped });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
 
 // GET /api/reports/dispatch
 // Calls DispatchReport stored procedure — same as web app
