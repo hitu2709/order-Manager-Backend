@@ -75,6 +75,27 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
   }
 });
 
+// TEMP DIAGNOSTIC: GET /api/reports/db-columns
+router.get('/db-columns', authMiddleware, async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.request().query(`
+      SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_NAME IN ('s_order','ord_tran','Product')
+      ORDER BY TABLE_NAME, ORDINAL_POSITION
+    `);
+    const grouped = {};
+    result.recordset.forEach(r => {
+      if (!grouped[r.TABLE_NAME]) grouped[r.TABLE_NAME] = [];
+      grouped[r.TABLE_NAME].push(r.COLUMN_NAME + ' (' + r.DATA_TYPE + ')');
+    });
+    return res.status(200).json({ success: true, data: grouped });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // GET /api/reports/dispatch
 // Calls DispatchReport stored procedure — same as web app
 router.get('/dispatch', authMiddleware, async (req, res) => {
