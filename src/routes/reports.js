@@ -71,7 +71,7 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
     return res.status(200).json({ success: true, data: result.recordset });
   } catch (err) {
     console.error('Pending orders report error:', err);
-    return res.status(500).json({ success: false, message: 'Error fetching pending orders report' });
+    return res.status(500).json({ success: false, message: err.message || 'Error fetching pending orders report' });
   }
 });
 
