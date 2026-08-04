@@ -75,8 +75,8 @@ router.get('/pending-orders', authMiddleware, async (req, res) => {
   }
 });
 
-// TEMP DIAGNOSTIC: GET /api/reports/db-columns
-router.get('/db-columns', authMiddleware, async (req, res) => {
+// TEMP DIAGNOSTIC: GET /api/reports/db-columns (no auth — remove after use)
+router.get('/db-columns', async (req, res) => {
   try {
     const pool = getPool();
     const result = await pool.request().query(`
