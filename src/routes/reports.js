@@ -100,13 +100,13 @@ router.get('/dispatch', authMiddleware, async (req, res) => {
       .execute('DispatchReport');
 
     // ── Fetch packing charge fields from dbo.challan ──────────────────────────
-    // pcs * SqrMtr = GrsWgt  and  pcs1 * SqrMtr1 = GrsWgt1
+    // pcs * SqrMtr = GrsWgt  and  pcs1 * SqrMtr1 = GrsWgt1  and  netWgt = Shop Amount
     const rows = result.recordset || [];
     const transNos = [...new Set(rows.map(r => r.Trans_no).filter(n => n != null && n !== ''))];
     if (transNos.length > 0) {
       try {
         const packResult = await pool.request().query(
-          `SELECT Trans_no, pcs, SqrMtr, GrsWgt, pcs1, SqrMtr1, GrsWgt1
+          `SELECT Trans_no, pcs, SqrMtr, GrsWgt, pcs1, SqrMtr1, GrsWgt1, netWgt
            FROM dbo.challan
            WHERE Trans_no IN (${transNos.join(',')})`
         );
@@ -121,6 +121,7 @@ router.get('/dispatch', authMiddleware, async (req, res) => {
             r._pcs1    = pack.pcs1    ?? 0;
             r._sqrMtr1 = pack.SqrMtr1 ?? 0;
             r._grsWgt1 = pack.GrsWgt1 ?? 0;
+            r._netWgt  = pack.netWgt  ?? 0;   // Shop Amount
           }
         });
       } catch (packErr) {
