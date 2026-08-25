@@ -86,8 +86,8 @@ router.get('/dispatch', authMiddleware, async (req, res) => {
     // SP accepts single values — use first of multi-select, '' for All
     const accCode  = (partyIds    && partyIds    !== 'All') ? partyIds.split(',')[0]    : '';
     const prodCode = (productIds  && productIds  !== 'All') ? productIds.split(',')[0]  : '';
-    // VouchNo uses the Ord_no string (e.g. "3 (22/07/2026)"), not the numeric trans_no
-    const vouchNo  = (dispatchNos && dispatchNos !== 'All') ? dispatchNos.split(',')[0] : '';
+    // VouchNo param in the SP is converted to int — send the numeric Trans_No, not Ord_no
+    const vouchNo  = (dispatchNos && dispatchNos !== 'All') ? dispatchNos.split(',')[0].trim() : '';
     const frmDate  = fromDate ? new Date(fromDate) : new Date();
     const tillDate = toDate   ? new Date(toDate)   : new Date();
 
