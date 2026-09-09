@@ -263,7 +263,7 @@ router.get('/products', authMiddleware, async (req, res) => {
 });
 
 // GET /api/orders/product-stock
-// Calls GetProductStockSummary SP — SP returns: ProductCode, ProdName, Unit, Rate, Stock
+// Calls GetProductStockSummaryNew SP — SP returns: ProductCode, ProdName, Unit, Rate, Stock
 router.get('/product-stock', authMiddleware, async (req, res) => {
   const { productCode } = req.query;
   if (!productCode) {
@@ -279,7 +279,7 @@ router.get('/product-stock', authMiddleware, async (req, res) => {
     const result = await pool.request()
       .input('FromDate', sql.VarChar, fromDate)
       .input('TillDate', sql.VarChar, tillDate)
-      .execute('GetProductStockSummary');
+      .execute('GetProductStockSummaryNew');
 
     // SP may return multiple result sets — scan ALL of them to find the one
     // that has 'ProductCode' and 'Stock' columns (the final SELECT in the SP)
