@@ -315,6 +315,33 @@ router.get('/product-stock', authMiddleware, async (req, res) => {
 });
 
 
+// GET /api/orders/:orderId/item-stock?productCode=xxx
+// Reads StkQty from dbo.ord_tran for a specific order+product (used in edit mode)
+router.get('/:orderId/item-stock', authMiddleware, async (req, res) => {
+  const { orderId } = req.params;
+  const { productCode } = req.query;
+  if (!orderId || !productCode) {
+    return res.status(400).json({ success: false, message: 'orderId and productCode are required' });
+  }
+  try {
+    const pool = getPool();
+    const result = await pool.request()
+      .input('transNo',   sql.BigInt,    parseInt(orderId))
+      .input('prodCode',  sql.VarChar(50), String(productCode).trim())
+      .query(`SELECT TOP 1 StkQty FROM dbo.ord_tran
+              WHERE trans_no = @transNo
+              AND LTRIM(RTRIM(pr_code)) = LTRIM(RTRIM(@prodCode))`);
+
+    const row = result.recordset && result.recordset[0];
+    const stock = row ? parseFloat(row.StkQty ?? 0) : 0;
+    return res.status(200).json({ success: true, stock });
+  } catch (err) {
+    console.error('Order item stock error:', err);
+    return res.status(500).json({ success: false, message: 'Error fetching order item stock: ' + err.message });
+  }
+});
+
+
 
 // GET /api/orders/numbers
 // Returns {trans_no, VouchNo, trans_dt} for display as DD/MM/YYYY(VouchNo)
