@@ -94,7 +94,6 @@ router.post('/create', authMiddleware, async (req, res) => {
         .input('amount',     sql.Float,        chunkTotal)
         .input('transport',  sql.NVarChar(100), trunc(transport, 100))
         .input('inspection', sql.NVarChar(500), trunc(notes || '', 500))
-        .input('spNote',     sql.NText,          notes || '')
         .input('username',   sql.VarChar(100), loggedInUser)
         .input('brokerCode', sql.NVarChar(7),  trunc(salesmanId || '', 7))
         .input('bookType',   sql.NVarChar(2),  'SO')
@@ -105,9 +104,9 @@ router.post('/create', authMiddleware, async (req, res) => {
         .input('chkTwo',     sql.Int,          chkTwo)
         .input('chkThree',   sql.Int,          chkThree)
         .query(`INSERT INTO s_order
-                  (trans_no, trans_dt, client_code, amount, transport, Inspection, Sp_Note, username, Broker_code, book_type, VouchNo, AddStock, chek_amt, chkOne, chkTwo, chkThree)
+                  (trans_no, trans_dt, client_code, amount, transport, Inspection, username, Broker_code, book_type, VouchNo, AddStock, chek_amt, chkOne, chkTwo, chkThree)
                 VALUES
-                  (@transNo, @transDt, @clientCode, @amount, @transport, @inspection, @spNote, @username, @brokerCode, @bookType, @vouchNo, @addStock, @chekAmt, @chkOne, @chkTwo, @chkThree)`);
+                  (@transNo, @transDt, @clientCode, @amount, @transport, @inspection, @username, @brokerCode, @bookType, @vouchNo, @addStock, @chekAmt, @chkOne, @chkTwo, @chkThree)`);
 
       // 3c. ord_tran rows for this chunk (srno resets to 1 for each new order)
       for (let i = 0; i < chunk.length; i++) {
@@ -436,8 +435,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
                COALESCE(b.ac_name, LTRIM(RTRIM(o.Broker_code)), 'Missing Name') as SalesmanName,
                'Pending' as Status, o.amount as TotalAmount,
                a.Place, a.Contact_person, a.ac_name1 as Address2,
-               o.transport as Transport, 
-               COALESCE(NULLIF(LTRIM(RTRIM(o.Sp_Note)),''), NULLIF(LTRIM(RTRIM(o.Inspection)),'')) as Notes,
+               o.transport as Transport, o.Inspection as Notes,
                o.chek_amt, o.chkOne, o.chkTwo, o.chkThree
         FROM s_order o
         LEFT JOIN Acmast a ON LTRIM(RTRIM(o.client_code)) = LTRIM(RTRIM(a.ac_code))
@@ -527,7 +525,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
       .query(`
         UPDATE s_order 
         SET trans_dt = @originalTransDt,
-            amount = @amount, transport = @transport, Sp_Note = @spNote, Broker_code = @brokerCode,
+            amount = @amount, transport = @transport, Inspection = @spNote, Broker_code = @brokerCode,
             client_code = @partyId, username = @username,
             chek_amt = @chekAmt, chkOne = @chkOne, chkTwo = @chkTwo, chkThree = @chkThree
         WHERE trans_no = @id
